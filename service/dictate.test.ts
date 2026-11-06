@@ -136,3 +136,25 @@ describe("live dictation and the kept key", () => {
     await expect(liveToken(hub, elevenlabs(200, { token: "" }).f, async () => ({ key: KEY }))).rejects.toThrow("ElevenLabs gave no token.");
   });
 });
+
+describe("dictation with OpenAI (Settings › Voice from)", () => {
+  const OKEY = "sk-proj-test0123456789abcdef0123456789abcdef";
+  const openaiKey = async () => ({ provider: "openai" as const, key: OKEY });
+  test("the recording goes to OpenAI's speech to text with the OpenAI key; the words come back", async () => {
+    const el = elevenlabs(200, { text: " Oi, abre a tarefa  SHEP 45. " });
+    expect(await dictate(hub, audio(), el.f, openaiKey)).toBe("Oi, abre a tarefa SHEP 45.");
+    expect(el.sent[0].url).toBe("https://api.openai.com/v1/audio/transcriptions");
+    expect((el.sent[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${OKEY}`);
+    expect((el.sent[0].init.body as FormData).get("model")).toBe("gpt-4o-transcribe");
+  });
+  test("no live words with OpenAI: the page uploads at Done instead, and nothing is asked of ElevenLabs", async () => {
+    const el = elevenlabs(200, { token: "x".repeat(20) });
+    await expect(liveToken(hub, el.f, openaiKey)).rejects.toThrow("Live words come with ElevenLabs only");
+    expect(el.sent.length).toBe(0);
+  });
+  test("nothing recorded: said before any key is looked up", async () => {
+    let asked = 0;
+    await expect(dictate(hub, new Blob([]), elevenlabs(200, {}).f, async () => { asked++; return { provider: "openai" as const, key: OKEY }; })).rejects.toThrow("Nothing was recorded.");
+    expect(asked).toBe(0);
+  });
+});

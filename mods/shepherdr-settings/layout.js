@@ -12,14 +12,15 @@
 // Under them, Add-ons: a switch for each add-on lib/addons.json gives one (lib/addons.js). Off is
 // shared "addons.off" (the mods follow at once) and Everywhere's "off" in ~/.herdr/shepherdr.json
 // (herdr-task, here and on other machines). One that others need, or that needs one that's off,
-// can't flip until they do: its line says which.
+// can't flip until they do: its line says which. Under Voice and dictation (on): Voice from, whose voice calls and
+// dictation use (Everywhere's voice.provider; core/voice-openai.js pickVoice).
 
 import { v_flex } from "gpui-base";
 import { shared, setShared } from "herdr";
-import { toggleSwitch } from "./ui.js";
+import { toggleSwitch, segmented } from "./ui.js";
 import { on, blockers, flip } from "./addons.js";
 // The switches, their words and an add-on's line: core/settings.js, shared with the web app.
-import { SWITCHES, ADDONS, SECTIONS, addonAbout } from "./core/settings.js";
+import { SWITCHES, ADDONS, SECTIONS, addonAbout, VOICE_FROM } from "./core/settings.js";
 export { SWITCHES };
 
 // A switch kept in shared state: on unless set to false.
@@ -37,12 +38,26 @@ export function layoutSection(view, t) {
     }))
     .when(Boolean(m?.addons?.some((a) => a.switch)), (el) => el
       .child(view.heading(t, ADDONS))
-      .children(m.addons.filter((a) => a.switch).map((a) => {
+      .children(m.addons.filter((a) => a.switch).flatMap((a) => {
         const now = on(a.id), stop = blockers(m, a.id, !now);
         const about = addonAbout(a.about, now, stop.map(title));
-        return view.row(t, a.title, about, toggleSwitch(`addon-${a.id}`, now, (next, _e, cx) => {
+        const row = view.row(t, a.title, about, toggleSwitch(`addon-${a.id}`, now, (next, _e, cx) => {
           const list = flip(a.id, next);
           view.change((cfg) => { const e = (cfg.everywhere ??= {}); if (list.length) e.off = list; else delete e.off; }, cx);
         }, { disabled: stop.length > 0 }));
+        return a.id === "voice" && now ? [row, voiceFrom(view, t)] : [row];
       })));
+}
+
+// Voice from: Automatic (no voice.provider), OpenAI or ElevenLabs.
+function voiceFrom(view, t) {
+  const v = view.cfg?.everywhere?.voice?.provider;
+  const now = v === "openai" || v === "elevenlabs" ? v : "auto";
+  return view.row(t, VOICE_FROM.title, VOICE_FROM.about, segmented("voice-from", VOICE_FROM.choices, now, (pick, _e, cx) => {
+    view.change((cfg) => {
+      const e = (cfg.everywhere ??= {});
+      if (pick === "auto") { if (e.voice) { delete e.voice.provider; if (!Object.keys(e.voice).length) delete e.voice; } }
+      else e.voice = { ...(e.voice ?? {}), provider: pick };
+    }, cx);
+  }));
 }

@@ -50,7 +50,7 @@
       "about": "Reports and draft screens from agents, beside the chat, with markup. Off: no Artifacts panel button.",
       "mods": ["artifacts", "task-artifacts"], "blocks": ["artifacts", "artifacts-list", "artifacts-view", "tasks-thread-artifacts"], "helpers": ["herdr-artifact"], "web": ["artifacts"] },
     { "id": "voice", "title": "Voice and dictation", "switch": true, "needs": ["chat"],
-      "about": "Call an Assistant and talk (an ElevenLabs key), and dictate into the box (the same key). Off: no call or mic buttons.",
+      "about": "Call an Assistant and talk (an OpenAI or ElevenLabs key), and dictate into the box (the same key). Off: no call or mic buttons.",
       "mods": ["chat-call"], "blocks": ["chat-call"], "keys": ["mod:chat ctrl-shift-d", "mod:chat ctrl-shift-space"], "web": ["voice"] },
     { "id": "reactions", "title": "Reactions", "switch": true, "needs": ["chat"],
       "about": "React to an agent's message with an emoji. Off: no smiley button (agents' own reactions still show).",

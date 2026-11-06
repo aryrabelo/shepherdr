@@ -10,7 +10,7 @@ import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 // the switches' words and an add-on's line: core/settings.js, the window's own (mods/shepherdr-settings/layout.js)
 import * as C from "../core/settings.js";
 
-const { SWITCHES: CORE_SWITCHES, ADDONS, SECTIONS, addonAbout } = C as any;
+const { SWITCHES: CORE_SWITCHES, ADDONS, SECTIONS, addonAbout, VOICE_FROM } = C as any;
 const FILE = process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json");
 // the repo's lib/addons.json, installed beside the service
 const MANIFEST = join(import.meta.dir, "..", "lib", "addons.json");
@@ -46,12 +46,27 @@ export function windowSection(value: (key: string) => unknown): SettingSection {
     // one that others need, or that needs one that's off: its switch shows, greyed, and its line says which
     rows.push({ label: a.title, key: `addon.${a.id}`, value: now ? "on" : "off", options: ["on", "off"], hint: addonAbout(a.about, now, names(stop)),
       group: ADDONS, ...(stop.length ? { disabled: true } : {}) });
+    // under the voice add-on (on): whose voice its calls and dictation use
+    if (a.id === "voice" && now) rows.push({ label: VOICE_FROM.title, key: "voice.provider", value: voiceWord(), options: VOICE_FROM.choices.map(([, w]: string[]) => w), hint: VOICE_FROM.about, group: ADDONS });
   }
   return { name: SECTIONS.find((s: any) => s.id === "window").title, global: true, rows };
 }
 
+/** Voice from's word now (Everywhere's voice.provider, Automatic when none). */
+const voiceWord = () => { const v = readFile()?.everywhere?.voice?.provider; return (VOICE_FROM.choices.find(([x]: string[]) => x === v) ?? VOICE_FROM.choices[0])[1]; };
+
 /** A switch flipped on the web. setShared: the service's shared document (the bridge brings it to the window). */
 export async function setWindow(key: string, word: string | null, setShared: (k: string, v: unknown) => Promise<unknown>) {
+  if (key === "voice.provider") {
+    const v = VOICE_FROM.choices.find(([, w]: string[]) => w === word)?.[0];
+    if (!v) throw new Error("That isn't one of its choices.");
+    const file = readSettings();
+    const e = (file.everywhere ??= {});
+    if (v === "auto") { if (e.voice) { delete e.voice.provider; if (!Object.keys(e.voice).length) delete e.voice; } }
+    else e.voice = { ...(e.voice ?? {}), provider: v };
+    writeSettings(file);
+    return;
+  }
   const on = word !== "off";
   const sw = SWITCHES.find((s) => `window.${s.id}` === key);
   if (sw) { await setShared(sw.key, on); return; }

@@ -35,9 +35,16 @@ connection it came on). A page from anywhere else can't change anything: writes 
 - Artifacts: a recipe (`core/recipe.js`) is drawn natively by the window and as HTML on the web.
   `herdr-artifact convert` turns an older drawn artifact into a recipe.
 - The task browser: Kitty in the window, a live view of the same browser on the web.
-- Voice calls and dictation: the machine's microphone in the window, the phone's on the web, through the service
-  (the same ElevenLabs voice agent, `core/voice.js`; ElevenLabs speech to text, Scribe, for dictation, with the
-  same key). Dictation writes the words while you speak (realtime Scribe: the page with a single-use token from
+- Voice calls and dictation: the machine's microphone in the window, the phone's on the web, through the service,
+  with the voice Settings › Window › Voice from picks (Everywhere's `voice.provider`; `core/voice-openai.js`
+  `pickVoice`): Automatic (OpenAI when `OPENAI_API_KEY` is in Settings › Secrets for Everywhere, else ElevenLabs),
+  OpenAI or ElevenLabs. OpenAI's: its Realtime API over a WebSocket (`gpt-realtime`, the key only in the socket's
+  header, 24 kHz PCM: the window's mic and speaker run at 24 kHz, the service converts the page's 16 kHz), told the
+  same prompt and the same Shepherdr tools as the ElevenLabs agent plus `end_call` and `skip_turn` of its own; it
+  speaks the person's language (Brazilian Portuguese too), and the service and the window keep its 15 minutes of
+  silence and hour-long call (`realtimeCall` tick). Its dictation is OpenAI's speech to text (`gpt-4o-transcribe`)
+  of the recording at Done, with no live words. ElevenLabs': the same ElevenLabs voice agent, `core/voice.js`;
+  ElevenLabs speech to text, Scribe, for dictation, with the same key. With ElevenLabs, dictation writes the words while you speak (realtime Scribe: the page with a single-use token from
   `/api/dictate/live`, the window's `record.ts` with the key in memory), so Done lands them in about 0.2 s; the
   recording is uploaded to `/api/dictate` only when the live words can't come. The voice agent has four Shepherdr tools (`core/voice.js` TOOLS), answered by the service with the web app's
   reach (`service/voice-tools.ts`): `look` reads anything (the call's context, any chat or a search in it, spaces,

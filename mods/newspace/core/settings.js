@@ -322,6 +322,13 @@ export const SWITCHES = [
     key: "coordinator.auto" },
 ];
 export const ADDONS = "Add-ons";
+// Under Voice and dictation: whose voice calls and dictation use (Everywhere's voice.provider in ~/.herdr/shepherdr.json;
+// core/voice-openai.js pickVoice reads it).
+export const VOICE_FROM = {
+  title: "Voice from",
+  about: "Automatic: OpenAI when an OpenAI key (OPENAI_API_KEY) is in Secrets, else ElevenLabs. Calls and dictation use it.",
+  choices: [["auto", "Automatic"], ["openai", "OpenAI"], ["elevenlabs", "ElevenLabs"]],
+};
 // An add-on's line: its about, and what stops a flip (stop: the titles in the way).
 export function addonAbout(about, now, stop) {
   if (!stop.length) return about;

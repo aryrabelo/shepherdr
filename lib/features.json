@@ -1012,8 +1012,8 @@
         ]
       },
       "forms": {
-        "herdr": "Mic, level wave, Cancel/Done (ElevenLabs Scribe)",
-        "desktop": "Mic; audio goes through the service to ElevenLabs Scribe",
+        "herdr": "Mic, level wave, Cancel/Done (OpenAI speech to text, or ElevenLabs Scribe with live words)",
+        "desktop": "Mic; audio goes through the service to OpenAI speech to text or ElevenLabs Scribe",
         "tablet": "Same",
         "phone": "Same; big mic button"
       },
@@ -1041,7 +1041,7 @@
         ]
       },
       "forms": {
-        "herdr": "Call an Assistant (ElevenLabs), mute, call mark on its space in the sidebar (a green wave on the narrow rail); the voice agent reads and acts on the window's frame",
+        "herdr": "Call an Assistant (OpenAI or ElevenLabs, Settings › Window › Voice from), mute, call mark on its space in the sidebar (a green wave on the narrow rail); the voice agent reads and acts on the window's frame",
         "desktop": "Same, through the service",
         "tablet": "Same",
         "phone": "Call mark on its space in the sidebar, and a slim band at the top while away from the call; the voice agent reads and acts on the page"

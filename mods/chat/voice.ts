@@ -1,4 +1,5 @@
-// A voice call with an agent's chat: an ElevenLabs voice agent talks with the person and reads,
+// A voice call with an agent's chat: the voice Settings › Voice from picks (key.ts): OpenAI's Realtime voice
+// (core/voice-openai.js, the mic and speaker at 24 kHz) or an ElevenLabs voice agent, talks with the person and reads,
 // opens and changes Shepherdr for them through its tools (core/voice.js: look, open, send, act),
 // which this machine's Shepherdr service answers (POST /api/voice/tool, service/voice-tools.ts:
 // the reach of the person's web app); without the service, only this chat (send, look at it).
@@ -17,7 +18,8 @@
 //   navved/*.json  from the chat, by the nav's name: { ok, why } once it tried it (open counts only then)
 // and beside it <call folder>.level: how loud the call is now, 0..1 (the agent while it speaks,
 // else the person), for the chat's wave.
-// Secrets: ELEVENLABS_API_KEY (the person's) from <app home>/secrets/elevenlabs.env, else as kept
+// Secrets: OPENAI_API_KEY for OpenAI's voice, as kept in Settings › Secrets for Everywhere (as below);
+// ELEVENLABS_API_KEY (the person's) from <app home>/secrets/elevenlabs.env, else as kept
 // in Settings › Secrets for Everywhere (the vault), on the machine that keeps the secrets: read
 // from there over herdr-core's link into memory only (core/voice.js voiceKey). The voice agent
 // made for this ("Herdr chat") is kept as ELEVENLABS_AGENT_ID in secrets/elevenlabs-agent.env,
@@ -28,6 +30,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { API, opening, replyLine, statusLine, whereLine, apiError, ensureAgent, agentFile, navWords } from "./core/voice.js";
 import { screenWords } from "./core/screen.js";
+import { realtimeCall, realtimeUrl, RATE as OPENAI_RATE } from "./core/voice-openai.js";
 import { SECRETS, keyFor, envFile } from "./key.ts";
 import { audio, ended as audioEnded, type Audio } from "./audio.ts";
 
@@ -38,6 +41,8 @@ const who = name || "the coding agent";
 
 let ended = false;
 let ws: WebSocket | null = null;
+// OpenAI's voice (core/voice-openai.js realtimeCall), when it is the one; null for ElevenLabs'
+let rt: any = null;
 let muted = false;
 let phase = "connecting";
 let since = Date.now();
@@ -206,7 +211,9 @@ async function startMic() {
       // No echo cancellation here: while its own voice plays (and a moment after), the voice
       // agent hears silence instead of hearing itself. Muted sends silence too.
       if (muted || Date.now() < playEnd + 350) piece = new Uint8Array(chunk);
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ user_audio_chunk: Buffer.from(piece).toString("base64") }));
+      if (ws?.readyState !== WebSocket.OPEN) continue;
+      if (rt) rt.mic(Buffer.from(piece).toString("base64"));
+      else ws.send(JSON.stringify({ user_audio_chunk: Buffer.from(piece).toString("base64") }));
     }
   }
   // On a Mac, a mic that stopped by itself (not allowed, unplugged) ends the call with why.
@@ -281,7 +288,51 @@ async function showHere(nav: unknown): Promise<{ ok: boolean; why?: string; did?
 }
 
 function send(line: object) {
+  if (rt) return rt.note(line);
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(line));
+}
+
+/** A tool the voice asked for: this machine's service answers it (else this chat only), and an open or a screen action
+ *  is done by this window's chat first (navved/), before the voice may say it's on screen (the screen tool's answer is
+ *  the screen itself; a space then its panel: the second once the first shows). */
+async function runTool(name: string, params: any) {
+  let a = await serviceTool(name, params);
+  if (!a) a = await localTool(name, params);
+  if (a.nav?.kind === "screen") a = { ...a, ...screenWords(await showHere(a.nav), a.nav.do) };
+  else if (a.nav) {
+    let ack = await showHere(a.nav);
+    if (ack?.ok && a.then) ack = await showHere(a.then);
+    a = { ...a, ...navWords(a.shows ?? "it", ack) };
+  }
+  return a;
+}
+
+/** The call through OpenAI's Realtime voice: the key only in the socket's header, 24 kHz both ways. */
+async function openai(key: string) {
+  inRate = outRate = OPENAI_RATE;
+  ws = new WebSocket(realtimeUrl(), { headers: { authorization: `Bearer ${key}` } } as any);
+  const here = (await serviceTool("look", { what: "here" }))?.result ?? "";
+  saidWhere = JSON.stringify(where());
+  rt = realtimeCall({
+    send: (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); },
+    audio: (b64: string) => { const pcm = Buffer.from(b64, "base64"); if (pcm.length % 2 === 0) play(new Uint8Array(pcm)); },
+    state: (s: string) => { phase = s; if (s === "thinking") thinkingAt = Date.now(); state(); },
+    interrupt: () => hush(),
+    tool: runTool,
+    // ended by the voice (end_call after the person's yes, a long silence, an hour): its last words play out first
+    end: (why: string | null) => { if (why) return end(why); setTimeout(() => end(), Math.max(0, Math.min(10000, playEnd - Date.now() + 300))); },
+  });
+  ws.onopen = () => {
+    rt.open(who, here);
+    startMic().catch((err) => end(`The microphone didn't start: ${err?.message ?? err}`));
+  };
+  ws.onmessage = (e) => { if (!ended) rt.hear(String(e.data)); };
+  ws.onerror = () => end("The voice connection failed.");
+  ws.onclose = (e) => {
+    if (ended) return;
+    if (e.code !== 1000) return end(`The call was closed (${e.code}${e.reason ? `: ${String(e.reason).replace(/(sk-|sess_|ek_)[A-Za-z0-9_*-]+/g, "…").slice(0, 200)}` : ""}).`);
+    setTimeout(() => end(), Math.max(0, Math.min(10000, playEnd - Date.now() + 300)));
+  };
 }
 
 let lastStatus: string | null = null;
@@ -322,6 +373,8 @@ async function main() {
   if (ended) return;
   const k = await keyFor();
   if ("error" in k) return end(k.error);
+  if (ended) return;
+  if (k.provider === "openai") return openai(k.key);
   const key = k.key;
   const id = await agentId(key, k.agent);
   const { signed_url } = await api(`/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(id)}`, key) as { signed_url: string };
@@ -357,17 +410,7 @@ async function main() {
     else if (m.type === "client_tool_call") {
       const c = m.client_tool_call ?? {};
       phase = "thinking"; thinkingAt = Date.now(); state();
-      const name = String(c.tool_name ?? ""), params = c.parameters ?? {};
-      let a = await serviceTool(name, params);
-      if (!a) a = await localTool(name, params);
-      // an open: this window's chat shows it, and says so (navved/), before the agent may say it's on screen
-      // (the screen tool's answer is the screen itself; a space then its panel: the second once the first shows)
-      if (a.nav?.kind === "screen") a = { ...a, ...screenWords(await showHere(a.nav), a.nav.do) };
-      else if (a.nav) {
-        let ack = await showHere(a.nav);
-        if (ack?.ok && a.then) ack = await showHere(a.then);
-        a = { ...a, ...navWords(a.shows ?? "it", ack) };
-      }
+      const a = await runTool(String(c.tool_name ?? ""), c.parameters ?? {});
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "client_tool_result", tool_call_id: c.tool_call_id, result: a.result, is_error: !!a.error }));
     }
   };
@@ -397,6 +440,7 @@ setInterval(() => {
 setInterval(() => {
   if (ended) return;
   inbox();
+  rt?.tick();
   if (ws?.readyState === WebSocket.OPEN) void moved();
   try { if (Date.now() - statSync(join(dir, "alive")).mtimeMs > 20000) end(); } catch { if (Date.now() - since > 20000) end(); }
   state();

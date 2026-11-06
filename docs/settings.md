@@ -61,7 +61,7 @@ task values a machine set before (the old machine scope) still apply there until
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there
   over herdr-core (the value on stdin, scopes renamed into that machine's words); that machine's service answers every
-  agent's request even with no window open, and voice calls read the ElevenLabs key from there into memory only.
+  agent's request even with no window open, and voice calls read the OpenAI or ElevenLabs key from there into memory only.
   `shepherdr secrets move-to <machine>` moves the vault (a backup on both sides; `move-to here --restore` on the old
   one rolls back when the other is gone). By default the secrets follow Serve from (Kept on says "Same as Serve from:
   <machine>"): with no machine picked, each service names where the secrets are now (the machine whose vault has
