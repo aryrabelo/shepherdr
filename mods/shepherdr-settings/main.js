@@ -113,7 +113,7 @@ export default class ShepherdrSettings extends View {
     }
     cx.spawn(async (cx) => {
       await this.load();
-      try { this.data = await models.loadChoices(null); } catch { this.data = null; }
+      try { this.data = await models.loadChoices(null, { tasks: true }); } catch { this.data = null; }
       this.resetRoles();
       this.resetNotes();
       if (this.scope) await this.folderOf(this.scope);

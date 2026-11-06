@@ -64,7 +64,8 @@ lists it once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-
   gives it and runs no checks); a Reviewer left
   unset runs Claude Code.
 - **What it lacks:** question, permission and plan cards (omp asks in its terminal: the task shows Needs you, answer
-  there); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so); usage limits and a
+  there); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so;
+  a mode set only in omp's own config isn't seen); usage limits and a
   backup agent taking over; its chat read back in the chat view (its terminal shows it); the Assistant's model menu
   switching a running omp agent.
 

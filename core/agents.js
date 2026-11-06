@@ -78,7 +78,10 @@ elif [ "$1" = omp ]; then
       else omp models --json 2>/dev/null | tr -d '\\n'; echo; fi
     }
     if [ -s "$c" ]; then
-      [ -n "$(find "$c" -mmin +60 2>/dev/null)" ] && (omp_models > "$c.$$" && [ -s "$c.$$" ] && mv "$c.$$" "$c" || rm -f "$c.$$") </dev/null >/dev/null 2>&1 &
+      # only the redirected subshell goes in the background, so the reader's stdout closes at once
+      if [ -n "$(find "$c" -mmin +60 2>/dev/null)" ]; then
+        (omp_models > "$c.$$" && [ -s "$c.$$" ] && mv "$c.$$" "$c" || rm -f "$c.$$") </dev/null >/dev/null 2>&1 &
+      fi
     else
       mkdir -p "$(dirname "$c")" 2>/dev/null
       omp_models > "$c.$$" && [ -s "$c.$$" ] && mv "$c.$$" "$c" || rm -f "$c.$$"

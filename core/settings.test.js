@@ -59,6 +59,10 @@ test("omp is offered as a task agent and reviewer once it lists its models (ASH-
   // the Assistant's menu leaves omp out (its chat can't read omp's log); task agents and reviewers keep it
   expect(Object.keys(S.roleMenus("coordinator", c.menus))).not.toContain("omp");
   expect(Object.keys(S.roleMenus("worker", c.menus))).toContain("omp");
+  // an Assistant's own pickers (a new chat, the New space dialog) load the choices without omp; Settings asks for it
+  expect(read("lib/settings.js")).toContain("if (!tasks) installed.omp = false;");
+  expect(read("mods/chat/main.js")).toMatch(/loadChoices\(space\?\.machine \?\? null\)/);
+  expect(read("mods/shepherdr-settings/main.js")).toContain("loadChoices(null, { tasks: true })");
   // omp's reviewer by default: Claude Code
   expect(S.otherCli("omp")).toBe("claude");
   expect(S.roleSel("reviewer", null, c, "omp")).toMatchObject({ unset: true, sel: { agent: "claude" } });

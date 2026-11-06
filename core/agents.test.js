@@ -104,3 +104,25 @@ test("omp's model list is kept: a second read doesn't run omp again (ASH-2 revie
   expect(readFileSync(runs, "utf8").trim().split("\n").length).toBe(1);
   expect(existsSync(join(dir, "cache", "herdr", "omp-models.json"))).toBe(true);
 });
+
+test("an hour-old omp list is shown at once and made again behind it (ASH-2 review round 2)", async () => {
+  const { DEFAULTS } = await import("./agents.js");
+  const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, utimesSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "omp-stale-")), bin = join(dir, "bin"), cache = join(dir, "cache", "herdr", "omp-models.json");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(dir, "cache", "herdr"), { recursive: true });
+  writeFileSync(join(bin, "omp"), `#!/bin/sh\nsleep 2\necho '{"models":[{"selector":"new/one","name":"New","thinking":[]}]}'\n`);
+  chmodSync(join(bin, "omp"), 0o755);
+  writeFileSync(cache, JSON.stringify([{ id: "old/one", label: "Old", efforts: [] }]) + "\n");
+  const old = new Date(Date.now() - 2 * 3600_000);
+  utimesSync(cache, old, old);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CACHE_HOME: join(dir, "cache") };
+  const t = Date.now();
+  const p = Bun.spawnSync(["sh", "-c", DEFAULTS, "defaults", "omp"], { env });
+  expect(Date.now() - t).toBeLessThan(1500); // read to its end, as the menus read it: no wait for omp
+  expect(parseDefaults("omp", p.stdout.toString()).models.map((m) => m.id)).toEqual(["old/one"]);
+  await Bun.sleep(2800);
+  expect(readFileSync(cache, "utf8")).toContain("new/one"); // made again for the next menu
+});

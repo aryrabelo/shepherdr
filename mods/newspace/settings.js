@@ -27,13 +27,15 @@ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", 
 const LAST = () => `${appHome()}/data/coordinator-last.json`;
 
 // What the agents on this machine (or `machine`) offer: { menus, icons, installed, permDefault,
-// defaults } (defaults: the CLI's own, for a first time).
-export async function loadChoices(machine = null) {
+// defaults } (defaults: the CLI's own, for a first time). omp only with `tasks` (Settings' task agent and
+// reviewer rows): an Assistant (the New space dialog, a new chat) runs Claude Code or Codex, whose logs its chat reads.
+export async function loadChoices(machine = null, { tasks = false } = {}) {
   const [claude, codex, omp, known] = await Promise.all([agent.defaults("claude", machine), agent.defaults("codex", machine),
-    agent.defaults("omp", machine), knownAgents({ on: machine }).catch(() => [])]);
+    tasks ? agent.defaults("omp", machine) : null, knownAgents({ on: machine }).catch(() => [])]);
   const prog = (k) => known.find((a) => a.key === k || (a.run ?? [])[0] === k);
   // omp, when Herdr doesn't list it: installed once it lists its models
   const installed = Object.fromEntries(AGENT_KEYS.map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude" || (k === "omp" && Boolean(omp?.models?.length))]));
+  if (!tasks) installed.omp = false;
   const icons = Object.fromEntries(AGENT_KEYS.map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
   const { menus, permDefault, defaults } = choicesFrom({ claude, codex, omp }, installed);
   return { menus, icons, installed, permDefault, defaults };

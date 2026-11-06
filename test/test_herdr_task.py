@@ -1913,7 +1913,9 @@ class OmpAgent(unittest.TestCase):
                 mock.patch("herdr_task.feedback.feedback_on", return_value=False):
             asks = launch.closing_line(S(), {"id": 1}, argv=["omp", "--approval-mode", "write"])
             free = launch.closing_line(S(), {"id": 1}, argv=["omp"])
+            joined = launch.closing_line(S(), {"id": 1}, argv=["omp", "--approval-mode=always-ask"])
         self.assertIn("approval mode still asks", asks)
+        self.assertIn("approval mode still asks", joined)
         self.assertNotIn("approval mode still asks", free)
 
     def test_the_session_note_extension(self):
