@@ -10,6 +10,7 @@ export const SOCK = join(DATA, "service.sock");   // the one-copy lock: a second
 export const TOKEN = join(DATA, "token");         // local callers (the Herdr window, the CLI) show this
 export const LOG = join(DATA, "service.log");
 export const PORT = Number(process.env.SHEPHERDR_PORT || 7788);
+export const HTTPS = Number(process.env.SHEPHERDR_HTTPS || 443); // tailscale serve's HTTPS port (install --https)
 export const MOUNT = "/shepherdr";                // tailscale serve --set-path; never funnel
 
 export function ensureData() {

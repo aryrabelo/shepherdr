@@ -4,17 +4,18 @@
 //
 //   bun service/main.ts            run it (systemd and launchd run exactly this)
 //   SHEPHERDR_PORT=7788            the port on 127.0.0.1
+//   SHEPHERDR_HTTPS=443            tailscale serve's HTTPS port for /shepherdr (install --https)
 //   SHEPHERDR_WEB=on|off           serve the web app and share it on the tailnet (default on)
 // Serve from (service/host.ts): one machine serves the web app and holds the shared data; on the others the service
 // reads and writes it there, keeps their settings in step (service/sync.ts) and doesn't share /shepherdr.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { randomBytes } from "node:crypto";
-import { DATA, SOCK, TOKEN, PORT, HOME, ensureData } from "./paths.ts";
+import { DATA, SOCK, TOKEN, PORT, HTTPS, HOME, ensureData } from "./paths.ts";
 import { holdLock } from "./lock.ts";
 import { gate, localCaller, type Gate } from "./auth.ts";
 import { trustedPeer } from "./peer.ts";
-import { whoami, share, served, unshare, restoreShare, type Me } from "./tailscale.ts";
+import { whoami, share, served, unshare, restoreShare, site, type Me } from "./tailscale.ts";
 import { qrFile } from "./qr.ts";
 import { Hub } from "./hub.ts";
 import { Store } from "./store.ts";
@@ -104,7 +105,7 @@ await Promise.race([host.start(), Bun.sleep(10_000)]);
 const store = new Store(hub, host);
 new Sync(hub, host).start();
 let me: Me | null = await whoami();
-const g: Gate = { owner: me?.login ?? null, dns: me?.dns ?? null, port: PORT, token };
+const g: Gate = { owner: me?.login ?? null, dns: me?.dns ?? null, port: PORT, token, https: HTTPS };
 const live = new Live(hub, store, () => me, VERSION);
 const compat = new Compat();
 const model = new Model(hub, live);
@@ -269,7 +270,7 @@ store.on(() => model.rebuild());
 void store.load().catch(() => {});
 const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live.setSnapshot(alertNewAnd(compat.snapshot({
   host: me?.host ?? "this machine", user: me?.name ?? "You", spaces: b.spaces, sections: b.sections, rows: b.rows, artifacts: artifacts.list, automations: b.automations,
-  settings: [...settings.sections(webNow ?? (me ? `https://${me.dns}/shepherdr/` : null), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null })), b.machines, me?.host ?? "this machine",
+  settings: [...settings.sections(webNow ?? (me ? `${site(me.dns)}/shepherdr/` : null), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null })), b.machines, me?.host ?? "this machine",
     // Settings › Autopilot (Everywhere's and each space's own), while its add-on is on
     offList().includes("autopilot") ? null : { everywhere: model.pilotEverywhere, trigger: (id) => model.pilotKnown(id)?.trigger }),
     // Secrets, as the window's page (Everywhere's and each space's own): every kept secret and where, and the agents
@@ -312,7 +313,7 @@ async function tailnet() {
   g.owner = me?.login ?? null;
   g.dns = me?.dns ?? null;
   const on = webOn(), serving = host.serving();
-  const own = me ? `https://${me.dns}/shepherdr/` : null;
+  const own = me ? `${site(me.dns)}/shepherdr/` : null;
   host.link = own;
   // another machine serves it: its link (the window's Settings › Web shows it and its QR code); this one isn't shared
   const link = serving ? own : host.hostLink();
@@ -580,7 +581,7 @@ const server = Bun.serve<{ who: string }>({
       return srv.upgrade(req, { data: { who: pass.who, voice: { key, addr } } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
     if (socket) return srv.upgrade(req, { data: { who: pass.who } }) ? undefined : new Response("upgrade failed", { status: 400 });
-    if (path === "/api/me") return json({ login: pass.who, via: pass.via, machine: me?.host ?? null, link: me ? `https://${me.dns}/shepherdr/` : null, version: VERSION, off: offPlugins() });
+    if (path === "/api/me") return json({ login: pass.who, via: pass.via, machine: me?.host ?? null, link: me ? `${site(me.dns)}/shepherdr/` : null, version: VERSION, off: offPlugins() });
     if (path === "/api/state" && req.method === "GET") return json(store.doc.version ? store.doc : await store.load());
     if (path === "/api/state" && req.method === "POST") {
       const body = await req.json().catch(() => null);
@@ -749,7 +750,7 @@ const server = Bun.serve<{ who: string }>({
   },
 });
 
-console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${me && webOn() ? `, https://${me.dns}/shepherdr/` : ""}`);
+console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${me && webOn() ? `, ${site(me.dns)}/shepherdr/` : ""}`);
 
 // the port is ours now: say where and this start's id (only this user can read it)
 writeFileSync(SERVICE_FILE, JSON.stringify({ port: server.port, id: SERVICE_ID, pid: process.pid, version: VERSION }) + "\n", { mode: 0o600 });

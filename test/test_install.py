@@ -158,6 +158,23 @@ class Install(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("1024", p.stdout + p.stderr)
 
+    def test_https(self):
+        """install --https (GitHub #754: 443 a raw TCP forward): the unit gives the service SHEPHERDR_HTTPS, the record
+        keeps it for updates, 443 puts the default back; a port out of range is refused."""
+        unit = self.p("Library/LaunchAgents/dev.shepherdr.service.plist") if sys.platform == "darwin" else self.p(".config/systemd/user/shepherdr.service")
+        out = run("install", "--root", self.root, "--yes", "--https", "8443").stdout
+        if "needs bun" in out:
+            self.skipTest("bun isn't installed here")
+        self.assertIn("SHEPHERDR_HTTPS", open(unit).read())
+        self.assertIn("8443", open(unit).read())
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        self.assertIn("8443", open(unit).read(), "an update keeps the HTTPS port")
+        run("install", "--root", self.root, "--yes", "--https", "443")
+        self.assertNotIn("SHEPHERDR_HTTPS", open(unit).read())
+        p = run("install", "--root", self.root, "--yes", "--https", "70000", ok=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("65535", p.stdout + p.stderr)
+
     def test_service_answers(self):
         """doctor and install trust only Shepherdr's own service on its port: the id it wrote in service.json, not
         another app answering health there (GitHub #635)."""
@@ -429,6 +446,76 @@ class Install(unittest.TestCase):
     def test_dry_run_writes_nothing(self):
         run("install", "--root", self.root, "--dry-run")
         self.assertEqual(tree(self.root), self.before)
+
+
+class HttpsHeld(unittest.TestCase):
+    """doctor names a raw TCP forward on Tailscale's HTTPS port (GitHub #754), from a fake `tailscale serve status
+    --json`: never the real tailscale or the person's serve config."""
+
+    def setUp(self):
+        from importlib.machinery import SourceFileLoader
+        self.sh = SourceFileLoader("shepherdr_cli", SHEPHERDR).load_module()
+        self.root = tempfile.mkdtemp(prefix="shepherdr-test-")
+        self.fake = os.path.join(self.root, "tailscale")
+        self.status({})
+        os.makedirs(os.path.join(self.root, ".herdr", "shepherdr"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def status(self, s):
+        with open(os.path.join(self.root, "status.json"), "w") as f:
+            json.dump(s, f)
+        with open(self.fake, "w") as f:
+            f.write(f"#!/bin/sh\n[ \"$1 $2\" = \"serve status\" ] && cat {self.root}/status.json\n")
+        os.chmod(self.fake, 0o755)
+
+    def web(self, why):
+        with open(os.path.join(self.root, ".herdr", "shepherdr", "web.json"), "w") as f:
+            json.dump({"on": True, "link": None, "why": why, "serve": {"host": None}}, f)
+
+    def check(self):
+        from unittest import mock
+        with mock.patch.object(self.sh.shutil, "which", lambda n: self.fake if n == "tailscale" else None):
+            return self.sh.serve_check(self.root)
+
+    def test_a_forward_on_443_is_named_with_the_fix(self):
+        self.status({"TCP": {"443": {"TCPForward": "127.0.0.1:8443"}}})
+        self.web("tailscale serve failed on port 443")
+        bad, notes = self.check()
+        text = "\n".join(notes)
+        self.assertIn("isn't shared on the tailnet", text)
+        self.assertIn("port 443 is a raw TCP forward to 127.0.0.1:8443", text)
+        self.assertIn("--https <another port>", text)
+        self.assertNotIn("served from this machine", text)
+        self.assertEqual(bad, [])
+
+    def test_tailscales_own_error_is_shown(self):
+        self.web("tailscale serve failed on port 443: error: something tailscale said")
+        notes = "\n".join(self.check()[1])
+        self.assertIn("error: something tailscale said", notes)
+        self.assertNotIn("served from this machine", notes)
+
+    def test_the_chosen_port_isnt_held(self):
+        """--https 8443 in the record: the forward on 443 is no longer in the way"""
+        record = os.path.join(self.root, self.sh.RECORD)
+        os.makedirs(os.path.dirname(record), exist_ok=True)
+        with open(record, "w") as f:
+            json.dump({"https": 8443}, f)
+        self.status({"TCP": {"443": {"TCPForward": "127.0.0.1:8443"}, "8443": {"HTTPS": True}}})
+        self.web(None)
+        self.assertEqual(self.check()[1], ["web app: served from this machine"])
+
+    def test_web_off_says_nothing_about_the_forward(self):
+        self.status({"TCP": {"443": {"TCPForward": "127.0.0.1:8443"}}})
+        with open(os.path.join(self.root, ".herdr", "shepherdr", "web.json"), "w") as f:
+            json.dump({"on": False, "link": None, "why": None, "serve": {"host": None}}, f)
+        self.assertEqual(self.check()[1], ["web app: served from this machine"])
+
+    def test_an_https_serve_isnt_a_forward(self):
+        self.assertIsNone(self.sh.tcp_forward({"TCP": {"443": {"HTTPS": True}}}, 443))
+        self.assertEqual(self.sh.tcp_forward({"TCP": {"443": {"TCPForward": "127.0.0.1:1"}}}, 443), "127.0.0.1:1")
+        self.assertIsNone(self.sh.tcp_forward({}, 443))
 
 
 class AudioTools(unittest.TestCase):

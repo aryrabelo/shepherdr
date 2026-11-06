@@ -3,7 +3,7 @@
 import type { ServerWebSocket } from "bun";
 import type { Hub } from "./hub.ts";
 import type { Store } from "./store.ts";
-import type { Me } from "./tailscale.ts";
+import { site, type Me } from "./tailscale.ts";
 
 import type { Chats, Watcher } from "./chats.ts";
 import type { Compat } from "./compat.ts";
@@ -35,7 +35,7 @@ export class Live {
   join(ws: WS) {
     this.pages.add(ws);
     const me = this.me();
-    ws.send(JSON.stringify({ type: "hello", version: this.version, login: ws.data.who, machine: me?.host ?? null, link: me ? `https://${me.dns}/shepherdr/` : null }));
+    ws.send(JSON.stringify({ type: "hello", version: this.version, login: ws.data.who, machine: me?.host ?? null, link: me ? `${site(me.dns)}/shepherdr/` : null }));
     for (const [name, text] of this.views) ws.send(`{"type":"view","name":${JSON.stringify(name)},"value":${text}}`);
     if (this.snap) ws.send(this.snap);
     if (!this.views.has("state")) void this.store.load().then((d) => this.put("state", d));
