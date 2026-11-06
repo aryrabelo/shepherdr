@@ -1,16 +1,22 @@
-// Dictation from the web: the phone or browser records, the service has ElevenLabs write it down (Scribe, core/voice.js
-// transcribe) with the same key as a voice call (voice.ts keyFor: here, or read from the machine that keeps the secrets
+// Dictation from the web: the phone or browser records, the service has it written down by the voice Settings › Voice
+// from picks (voice.ts voiceFor): OpenAI's speech to text (core/voice-openai.js openaiTranscribe) or ElevenLabs' (Scribe,
+// core/voice.js transcribe), with the same key as a voice call (here, or read from the machine that keeps the secrets
 // into memory only), as the window's dictation does (mods/chat/transcribe.ts). Nothing is kept; the key is never logged.
+// The live words are ElevenLabs' only: with OpenAI the page uploads the recording at Done.
 // SHEP-63: the words are written live while the person speaks (core/voice.js liveWords): the page asks here for a
 // single-use token as it starts recording (liveToken), and only uploads the recording (dictate) if that fails. The key
 // is kept in this process's memory for a while (cachedKey), so neither waits on the machine that keeps the secrets.
 import type { Hub } from "./hub.ts";
 import * as V from "../core/voice.js";
-import { keyFor } from "./voice.ts";
+import * as O from "../core/voice-openai.js";
+import { voiceFor, voiceSetting } from "./voice.ts";
 
-const { transcribe, liveTokenRequest, sttError, dictateKeyError } = V as any;
+const { transcribe, liveTokenRequest, sttError, dictateKeyError, MAX_AUDIO } = V as any;
+const { openaiTranscribe } = O as any;
 
-type Key = { key: string; agent?: string } | { error: string; why: string };
+type Key = { key: string; agent?: string; provider?: "openai" | "elevenlabs" } | { error: string; why: string; dictate?: string };
+/** The words with OpenAI there are no live words for (the page uploads at Done instead). */
+export const NO_LIVE = "Live words come with ElevenLabs only: the recording is written down at Done.";
 
 /** a name for the upload from its type (ElevenLabs reads the audio itself; the name only helps) */
 export const fileName = (type: string) => `dictation.${/mp4|m4a|aac/.test(type) ? "m4a" : /ogg/.test(type) ? "ogg" : /wav/.test(type) ? "wav" : /mpeg|mp3/.test(type) ? "mp3" : "webm"}`;
@@ -33,19 +39,31 @@ export function keyCache(find: () => Promise<Key>, keep = KEY_KEEP, now = () => 
   return { get, forget: () => { kept = null; } };
 }
 
-let cache: ReturnType<typeof keyCache> | null = null;
-const cachedKey = (hub: Pick<Hub, "call">) => (cache ??= keyCache(() => keyFor(hub)));
+let cache: ReturnType<typeof keyCache> | null = null, cacheFor = "";
+/** the voice kept for the Voice from it was found for: a change there finds it again at once */
+export const cachedKey = (hub: Pick<Hub, "call">, setting = voiceSetting()) => {
+  if (!cache || cacheFor !== setting) { cacheFor = setting; cache = keyCache(() => voiceFor(hub, () => setting)); }
+  return cache;
+};
 /** a refused key: found again next time */
-const refused = (e: unknown) => { if (/\b401\b|invalid.*key|unauthori/i.test(String((e as Error)?.message ?? e))) cache?.forget(); };
+const refused = (e: unknown) => { if (/\b401\b|invalid.*key|incorrect api key|unauthori/i.test(String((e as Error)?.message ?? e))) cache?.forget(); };
 
 export async function dictate(hub: Pick<Hub, "call">, audio: Blob, fetchFn: typeof fetch = fetch, key = () => cachedKey(hub).get()): Promise<string> {
-  try { return await transcribe(audio, key, fetchFn, fileName(audio.type)); } catch (e) { refused(e); throw e; }
+  try {
+    if (!audio?.size) throw new Error("Nothing was recorded.");
+    if (audio.size > MAX_AUDIO) throw new Error("That recording is too long.");
+    const k = await key();
+    if ("error" in k) throw new Error(dictateKeyError(k));
+    if (k.provider === "openai") return await openaiTranscribe(audio, k, fetchFn, fileName(audio.type));
+    return await transcribe(audio, async () => k, fetchFn, fileName(audio.type));
+  } catch (e) { refused(e); throw e; }
 }
 
 /** A single-use token for one live dictation from the page (it expires in minutes and opens one session only). */
 export async function liveToken(hub: Pick<Hub, "call">, fetchFn: typeof fetch = fetch, key = () => cachedKey(hub).get()): Promise<string> {
   const k = await key();
   if ("error" in k) throw new Error(dictateKeyError(k));
+  if (k.provider === "openai") throw new Error(NO_LIVE);
   const { url, init } = liveTokenRequest(k.key);
   let r: Response;
   try { r = await fetchFn(url, { ...init, signal: AbortSignal.timeout(10000) }); }

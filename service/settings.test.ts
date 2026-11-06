@@ -268,3 +268,30 @@ test("Feedback offers and its repo", () => {
   s.set("agents.feedback_repo", "", "all");
   expect(JSON.parse(readFileSync(file, "utf8")).everywhere?.agents).toBeUndefined();
 });
+
+test("Window › Voice from (under Voice and dictation): Automatic, OpenAI or ElevenLabs, kept as Everywhere's voice.provider", async () => {
+  const { windowSection, setWindow } = await import("./window.ts");
+  const O: any = await import("../core/voice-openai.js");
+  const before = JSON.parse(readFileSync(file, "utf8"));
+  const row = () => windowSection(() => undefined).rows.find((r) => r.key === "voice.provider");
+  expect(row()).toMatchObject({ label: CORE.VOICE_FROM.title, value: "Automatic", options: ["Automatic", "OpenAI", "ElevenLabs"], group: CORE.ADDONS });
+  const shared: string[] = [];
+  await setWindow("voice.provider", "OpenAI", async (k) => { shared.push(k); });
+  let f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.voice).toEqual({ provider: "openai" });
+  expect(O.providerSetting(f)).toBe("openai");
+  expect(row()!.value).toBe("OpenAI");
+  await setWindow("voice.provider", "ElevenLabs", async () => {});
+  expect(O.providerSetting(JSON.parse(readFileSync(file, "utf8")))).toBe("elevenlabs");
+  await setWindow("voice.provider", "Automatic", async () => {});
+  f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.voice).toBeUndefined();
+  expect(f.spaces).toEqual(before.spaces);
+  await expect(setWindow("voice.provider", "Codex", async () => {})).rejects.toThrow();
+  expect(shared).toEqual([]);
+  // the voice add-on off: no Voice from row
+  await setWindow("addon.voice", "off", async () => {});
+  expect(row()).toBeUndefined();
+  await setWindow("addon.voice", "on", async () => {});
+  expect(row()).toBeDefined();
+});

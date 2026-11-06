@@ -233,9 +233,22 @@ export const NO_KEY = "Voice calls need an ElevenLabs key: add it in Settings �
 export const noKeyOn = (name) => `Voice calls need an ElevenLabs key: ${name}, which keeps your secrets, has none. Add ELEVENLABS_API_KEY in Settings › Secrets, for Everywhere.`;
 export const unreachable = (name) => `Can't reach ${name}, which keeps your secrets, for the ElevenLabs key: is it on and linked? Try again in a moment.`;
 
+// The OpenAI key (Settings › Voice from: OpenAI, core/voice-openai.js), found the same way under its own name.
+export const OPENAI_KEY_NAME = "OPENAI_API_KEY";
+const KEY_WORDS = {
+  [KEY_NAME]: { none: NO_KEY, noneOn: noKeyOn, unreachable },
+  [OPENAI_KEY_NAME]: {
+    none: "Voice calls through OpenAI need an OpenAI key: add it in Settings › Secrets (as OPENAI_API_KEY, for Everywhere).",
+    noneOn: (name) => `Voice calls through OpenAI need an OpenAI key: ${name}, which keeps your secrets, has none. Add OPENAI_API_KEY in Settings › Secrets, for Everywhere.`,
+    unreachable: (name) => `Can't reach ${name}, which keeps your secrets, for the OpenAI key: is it on and linked? Try again in a moment.`,
+  },
+};
+/** A key name's words: none here, none on that machine, that machine can't be reached. */
+export const keyWords = (name = KEY_NAME) => KEY_WORDS[name] ?? KEY_WORDS[KEY_NAME];
+
 // Run with python3 on the machine that keeps the secrets: prints {"key", "agent"} (the agent only if made with this
-// key). Reads the vault's Everywhere entry, else the old secrets/elevenlabs.env there.
-export const KEY_SCRIPT = `
+// key). Reads the vault's Everywhere entry of that name, else (the ElevenLabs key only) the old secrets/elevenlabs.env there.
+export const keyScript = (name = KEY_NAME) => `
 import hashlib, json, os
 H = os.path.expanduser("~")
 app = os.environ.get("HERDR_APP_HOME") or os.path.join(H, ".config", "herdr-app")
@@ -257,14 +270,16 @@ key = ""
 try:
     with open(os.path.join(H, ".herdr", "vault.json")) as f:
         v = json.load(f)
-    key = next((e["value"] for e in v.get("secrets", []) if e.get("name") == "${KEY_NAME}" and e.get("scope") == "everywhere" and isinstance(e.get("value"), str)), "")
+    key = next((e["value"] for e in v.get("secrets", []) if e.get("name") == "${name}" and e.get("scope") == "everywhere" and isinstance(e.get("value"), str)), "")
 except Exception:
     pass
-key = key or env(os.path.join(app, "secrets", "elevenlabs.env")).get("${KEY_NAME}", "")
-a = env(os.path.join(app, "secrets", "elevenlabs-agent.env"))
+old = "${name}" == "${KEY_NAME}"
+key = key or (env(os.path.join(app, "secrets", "elevenlabs.env")).get("${KEY_NAME}", "") if old else "")
+a = env(os.path.join(app, "secrets", "elevenlabs-agent.env")) if old else {}
 tag = hashlib.sha256(key.encode()).hexdigest()[:16] if key else ""
 print(json.dumps({"key": key, "agent": a.get("ELEVENLABS_AGENT_ID", "") if key and a.get("ELEVENLABS_KEY_TAG") == tag else ""}))
 `;
+export const KEY_SCRIPT = keyScript();
 
 /** The vault's Everywhere value of a name (the vault file's text), else "". */
 export function vaultValue(text, name = KEY_NAME) {
@@ -276,7 +291,7 @@ export function vaultValue(text, name = KEY_NAME) {
 }
 
 /**
- * The key for a call: { key, agent?, from } (from: "file" | "here" | the main machine's name) or { error, why }
+ * The key for a call (name: ELEVENLABS_API_KEY, or OPENAI_API_KEY): { key, agent?, from } (from: "file" | "here" | the main machine's name) or { error, why }
  * (why: "none" when the machine that keeps the secrets truly has none, "unreachable" when it can't be asked now,
  * No machine named to keep them yet (the services name one on their own, core/secrets.js autoKeeper; this is until that
  * reaches here): this machine's vault, then each machine linked from here, the first with a key. io:
@@ -286,37 +301,38 @@ export function vaultValue(text, name = KEY_NAME) {
  *   ask(name, script)  python3 -c script on that machine: its stdout, or null when it couldn't run there
  *   machines()         the names of the machines linked from here that are on now (only asked when none is named)
  */
-export async function voiceKey(io) {
-  const file = io.oldFile();
+export async function voiceKey(io, name = KEY_NAME) {
+  const w0 = keyWords(name);
+  const file = name === KEY_NAME ? io.oldFile() : "";
   if (file) return { key: file, from: "file" };
   const w = await io.where().catch(() => null);
   if (!w || w.here) {
-    const key = vaultValue(io.vault() ?? "");
-    return key ? { key, from: "here" } : { error: NO_KEY, why: "none" };
+    const key = vaultValue(io.vault() ?? "", name);
+    return key ? { key, from: "here" } : { error: w0.none, why: "none" };
   }
   if (!w.set) {
-    const here = vaultValue(io.vault() ?? "");
+    const here = vaultValue(io.vault() ?? "", name);
     if (here) return { key: here, from: "here" };
-    for (const name of (await io.machines?.().catch(() => null)) ?? []) {
-      const r = await askKey(io, name);
+    for (const m of (await io.machines?.().catch(() => null)) ?? []) {
+      const r = await askKey(io, m, name);
       if (r?.key) return r;
     }
-    return { error: NO_KEY, why: "none" };
+    return { error: w0.none, why: "none" };
   }
-  if (!w.name) return { error: unreachable("the machine that keeps your secrets (not linked from here)"), why: "unreachable" };
-  const r = await askKey(io, w.name);
-  if (!r) return { error: unreachable(w.name), why: "unreachable" };
-  if (!r.key) return { error: noKeyOn(w.name), why: "none" };
+  if (!w.name) return { error: w0.unreachable("the machine that keeps your secrets (not linked from here)"), why: "unreachable" };
+  const r = await askKey(io, w.name, name);
+  if (!r) return { error: w0.unreachable(w.name), why: "unreachable" };
+  if (!r.key) return { error: w0.noneOn(w.name), why: "none" };
   return r;
 }
 
-// The key on that machine (KEY_SCRIPT): { key, agent, from } (key "" when it has none), or null when it can't be asked.
-async function askKey(io, name) {
-  const out = await io.ask(name, KEY_SCRIPT).catch(() => null);
+// The key on that machine (keyScript): { key, agent, from } (key "" when it has none), or null when it can't be asked.
+async function askKey(io, on, name = KEY_NAME) {
+  const out = await io.ask(on, name === KEY_NAME ? KEY_SCRIPT : keyScript(name)).catch(() => null);
   let r = null;
   try { r = JSON.parse(String(out ?? "").trim().split("\n").pop()); } catch {}
   if (!r || typeof r.key !== "string") return null;
-  return { key: r.key, agent: r.key && typeof r.agent === "string" && /^[\w-]{1,200}$/.test(r.agent) ? r.agent : "", from: name };
+  return { key: r.key, agent: r.key && typeof r.agent === "string" && /^[\w-]{1,200}$/.test(r.agent) ? r.agent : "", from: on };
 }
 
 // ---- dictation ----------------------------------------------------------------------------
@@ -329,7 +345,7 @@ export const DICTATE_NO_KEY = "Dictation needs an ElevenLabs key in Settings ›
 export const MAX_AUDIO = 20 * 1024 * 1024;
 
 /** A failed key lookup (voiceKey's { error, why }) in dictation's words: no key → where to add it; else as it said. */
-export const dictateKeyError = (k) => k.why === "none" ? DICTATE_NO_KEY : k.error;
+export const dictateKeyError = (k) => k.why === "none" ? (k.dictate ?? DICTATE_NO_KEY) : k.error;
 
 /** The speech to text request: POST <API>/speech-to-text, multipart with the audio and the model; no language_code,
  *  so it finds the language itself; no audio events ("(laughter)"). */

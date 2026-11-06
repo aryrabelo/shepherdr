@@ -87,7 +87,7 @@ Shepherdr doesn't update itself: it never follows main, so a merge can't change 
 
 ### Do I need to know how to code?
 
-You need to be comfortable in a terminal for the install. After that everything happens in the Herdr window or the web app: you write to Assistants and answer cards, and Shepherdr settings holds the few defaults. You'll need macOS or Linux, the Herdr app 0.1.12 or newer with herdr-core 0.1.17 or newer, Python 3.8+, Git, and Claude Code or Codex, installed and signed in. `gh` (pull requests), agent-browser and Chrome for the task browser, and an ElevenLabs key for voice and dictation are optional; the web app needs Bun and Tailscale. [Install](docs/install.md) covers the prerequisites.
+You need to be comfortable in a terminal for the install. After that everything happens in the Herdr window or the web app: you write to Assistants and answer cards, and Shepherdr settings holds the few defaults. You'll need macOS or Linux, the Herdr app 0.1.12 or newer with herdr-core 0.1.17 or newer, Python 3.8+, Git, and Claude Code or Codex, installed and signed in. `gh` (pull requests), agent-browser and Chrome for the task browser, and an OpenAI or ElevenLabs key for voice and dictation are optional; the web app needs Bun and Tailscale. [Install](docs/install.md) covers the prerequisites.
 
 ### Can my coding agent install it for me?
 
@@ -121,7 +121,7 @@ Shepherdr settings → Machines says how each machine is, and each machine shows
 
 ### Does Shepherdr send my work to a hosted service?
 
-No. Shepherdr runs inside the Herdr app on your own machine, keeps its files there, talks to your local herdr-core, and reaches your other machines over herdr-core's remote and your own SSH. The web app is served from your own machine to your tailnet only. Your agent CLI still uses its own service as usual, `gh` talks to GitHub, and voice calls and dictation go through ElevenLabs if you set them up.
+No. Shepherdr runs inside the Herdr app on your own machine, keeps its files there, talks to your local herdr-core, and reaches your other machines over herdr-core's remote and your own SSH. The web app is served from your own machine to your tailnet only. Your agent CLI still uses its own service as usual, `gh` talks to GitHub, and voice calls and dictation go through OpenAI or ElevenLabs if you set them up.
 
 ### Will it touch my branches or worktrees on its own?
 
@@ -145,7 +145,7 @@ They are soft. A task's review, merge and rules are lines in its brief, and its 
 
 ### What does it cost?
 
-Shepherdr is free and [MIT licensed](LICENSE). Your agent CLI's usual usage charges still apply: every task is a full agent session (plus a review when it's on), each Assistant spends tokens on each message and on Autopilot's heartbeat, and voice calls use your ElevenLabs account.
+Shepherdr is free and [MIT licensed](LICENSE). Your agent CLI's usual usage charges still apply: every task is a full agent session (plus a review when it's on), each Assistant spends tokens on each message and on Autopilot's heartbeat, and voice calls use your OpenAI or ElevenLabs account.
 
 ### What is herdr-core?
 

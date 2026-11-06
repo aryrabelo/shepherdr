@@ -12,7 +12,7 @@ place, never overwrites what you made yourself, and keeps a backup of anything i
   web app.
 - Optional, per add-on: `gh` (pull requests), agent-browser 0.41.1, node and Chrome (the task browser), bun,
   `pw-record` and `pw-play` for dictation and voice calls in the window on Linux (on macOS, Apple's command line
-  tools: `xcode-select --install`), an ElevenLabs key for voice calls and dictation.
+  tools: `xcode-select --install`), an OpenAI key (OPENAI_API_KEY) or an ElevenLabs key for voice calls and dictation.
 
 ## Install
 

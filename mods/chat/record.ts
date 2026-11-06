@@ -5,7 +5,7 @@
 // The level file holds one number, 0..1, updated ten times a second; or "!" and the words when the mic can't work
 // (not allowed on a Mac, none there, no recorder), and this ends.
 // SHEP-63: the words are also written while you speak: the audio streams to ElevenLabs' realtime speech to text (the
-// key from key.ts, in memory only), and on SIGINT the last words are asked for and written to <out.wav>.txt as
+// key from key.ts, in memory only; with OpenAI's voice there are none), and on SIGINT the last words are asked for and written to <out.wav>.txt as
 // { text } (a moment later, however long it was). No .txt: the live words didn't come, so transcribe.ts uploads the wav.
 
 import { writeFileSync } from "node:fs";
@@ -48,7 +48,8 @@ const flush = () => {
 };
 (async () => {
   const k = await keyFor().catch(() => null);
-  if (!k || "error" in k || broken) return fail();
+  // the live words are ElevenLabs' only: with OpenAI's voice, transcribe.ts uploads the wav at the end
+  if (!k || "error" in k || k.provider === "openai" || broken) return fail();
   ws = new WebSocket(liveUrl(), { headers: { "xi-api-key": k.key } } as any);
   ws.onopen = () => { for (const m of queue) ws!.send(m); queue = []; };
   ws.onmessage = (e) => {

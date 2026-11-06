@@ -1,6 +1,8 @@
 // A voice call from the web (2.1's call: the page streams its microphone here as 16 kHz PCM and plays what comes
-// back), as the window's call (mods/chat/voice.ts) with the phone's microphone and speaker: the same ElevenLabs voice
-// agent (core/voice.js), the same key and agent id (<app home>/secrets), its tools answered here (voice-tools.ts:
+// back), as the window's call (mods/chat/voice.ts) with the phone's microphone and speaker: Settings › Voice from's
+// voice (core/voice-openai.js pickVoice): OpenAI's Realtime voice with the OpenAI key (core/voice-openai.js, its 24 kHz
+// converted here), or the same ElevenLabs voice agent (core/voice.js), the same key and agent id (<app home>/secrets),
+// its tools answered here (voice-tools.ts:
 // look, open, send, act, with the reach of the person's web app), and the called agent's replies and status said as
 // [Update]s. The page tells where it is (what it shows) as it moves; an open comes back to it as a nav message.
 // Nothing is recorded or kept; a key is never sent to the page or logged.
@@ -10,18 +12,20 @@ import { createHash } from "node:crypto";
 import type { Hub } from "./hub.ts";
 import { HOME } from "./paths.ts";
 import * as V from "../core/voice.js";
+import * as O from "../core/voice-openai.js";
 import { secretBin } from "./secrets.ts";
 import { voiceTool, lookHere, shown, type Ack, type Nav, type VoiceIO, type Where } from "./voice-tools.ts";
 
-const { API, opening, replyLine, statusLine, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile } = V as any;
+const { API, opening, replyLine, statusLine, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, KEY_NAME } = V as any;
+const { realtimeCall, realtimeUrl, resampler, pickVoice, providerSetting, RATE } = O as any;
 const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
 const SECRETS = join(APP, "secrets");
 
 const envFile = (file: string): Record<string, string> => { try { return envLines(readFileSync(file, "utf8")); } catch { return {}; } };
 
-/** The ElevenLabs key (core/voice.js voiceKey): the old file here, the vault here, or the machine that keeps the
- *  secrets, read over herdr-core's link into memory only. */
-export function keyFor(hub: Pick<Hub, "call">) {
+/** A voice key (core/voice.js voiceKey; name: ELEVENLABS_API_KEY or OPENAI_API_KEY): the old file here (ElevenLabs'),
+ *  the vault here, or the machine that keeps the secrets, read over herdr-core's link into memory only. */
+export function keyFor(hub: Pick<Hub, "call">, name: string = KEY_NAME) {
   return voiceKey({
     oldFile: () => envFile(join(SECRETS, "elevenlabs.env")).ELEVENLABS_API_KEY || "",
     where: async () => {
@@ -36,7 +40,17 @@ export function keyFor(hub: Pick<Hub, "call">) {
       const r = await hub.call<{ code: number; stdout: string }>("machine.exec", { on, argv: ["python3", "-c", script], timeout: 15 }, 20_000);
       return r.code === 0 ? Buffer.from(r.stdout ?? "", "base64").toString("utf8") : null;
     },
-  }) as Promise<{ key: string; agent?: string } | { error: string; why: string }>;
+  }, name) as Promise<{ key: string; agent?: string } | { error: string; why: string }>;
+}
+
+export type Voice = { provider: "openai" | "elevenlabs"; key: string; agent?: string } | { error: string; why: string; dictate?: string };
+/** Settings › Voice from (Everywhere's voice.provider) and its key: OpenAI's, ElevenLabs', or Automatic's pick. */
+// read when a call or dictation starts (the window's settings write it; another machine's is pushed from there)
+export const voiceSetting = (): string => {
+  try { return providerSetting(JSON.parse(readFileSync(process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json"), "utf8"))); } catch { return "auto"; }
+};
+export function voiceFor(hub: Pick<Hub, "call">, setting = voiceSetting) {
+  return pickVoice(setting(), (name: string) => keyFor(hub, name)) as Promise<Voice>;
 }
 
 export async function api(path: string, key: string, init: RequestInit = {}) {
@@ -70,13 +84,17 @@ export type CallDeps = {
   where: Where;
   /** the voice agent's socket address (default: a signed ElevenLabs one for the person's key; a test's fake) */
   dial?: () => Promise<string>;
+  /** the voice and its key (default: Settings › Voice from's, voiceFor; with only dial, ElevenLabs) */
+  pick?: () => Promise<Voice>;
+  /** OpenAI's socket for the voice's key (default: the Realtime API with the key in its header; a test's fake) */
+  dialOpenAI?: (key: string) => { url: string; headers?: Record<string, string> };
   /** how long an open waits for the page to say it shows it (ms) */
   navWait?: number;
 };
 
 /** The voice agent's socket: a signed address for the "Herdr chat" agent of the person's key. */
-async function dialElevenLabs(hub: Hub) {
-  const k = await keyFor(hub);
+async function dialElevenLabs(hub: Hub, kept?: { key: string; agent?: string }) {
+  const k = kept ?? await keyFor(hub);
   if ("error" in k) throw new Error(k.error);
   const id = await agentId(k.key, k.agent);
   const { signed_url } = await api(`/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(id)}`, k.key) as { signed_url: string };
@@ -110,13 +128,19 @@ export function voiceCall(hub: Hub, who: string, deps: CallDeps, page: Page) {
   let lastStatus = view.status(), lastReply = view.lastReply()?.id ?? null;
   const unfollow = deps.follow();
   const tell = (m: object) => { try { page.send(JSON.stringify(m)); } catch {} };
-  const toVoice = (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
+  // OpenAI's voice (core/voice-openai.js realtimeCall): the page's 16 kHz to its 24 kHz and back
+  let rt: any = null;
+  const up = resampler(16000, RATE), down = resampler(RATE, 16000);
+  const raw = (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
+  // an ElevenLabs-shaped line ([Update]s, the opening): as it is, or as OpenAI's note
+  const toVoice = (m: any) => { if (rt) rt.note(m); else raw(m); };
   const here = () => { const s = io.snap(); return s ? lookHere(s, where) : ""; };
   let said = "", saying: ReturnType<typeof setTimeout> | null = null;
   const end = (why: string | null = null) => {
     if (ended) return;
     ended = true;
     clearInterval(watch);
+    clearInterval(ticks);
     if (saying) clearTimeout(saying);
     unfollow();
     for (const done of [...waiting.values()]) done({ ok: false, why: "the call ended" });
@@ -133,8 +157,39 @@ export function voiceCall(hub: Hub, who: string, deps: CallDeps, page: Page) {
     if (r && r.id !== lastReply) { lastReply = r.id; toVoice(replyLine(who, r.text)); }
   }, 1000);
 
+  const ticks = setInterval(() => rt?.tick(), 1000);
+  // a tool asked by the voice: answered here, an open or a screen action done by this very page first
+  const answer = async (name: string, params: any) => shown(await voiceTool(name, params ?? {}, where, io), show);
+
+  /** OpenAI's Realtime voice on its socket (Bun's WebSocket takes the key as a header: never in the address). */
+  const openai = (key: string) => {
+    const d = (deps.dialOpenAI ?? ((k: string) => ({ url: realtimeUrl(), headers: { authorization: `Bearer ${k}` } })))(key);
+    ws = new (WebSocket as any)(d.url, d.headers ? { headers: d.headers } : undefined) as WebSocket;
+    rt = realtimeCall({
+      send: raw,
+      audio: (b64: string) => { const pcm = down(new Uint8Array(Buffer.from(b64, "base64"))); if (pcm.length) page.send(pcm); },
+      state: (state: string) => tell({ type: "state", state }),
+      interrupt: () => tell({ type: "interrupt" }),
+      tool: answer,
+      // the voice ended the call (end_call after the person's yes, a long silence, an hour): the page plays its last
+      // words, then closes the call without an error
+      end: (why: string | null) => { if (!why) tell({ type: "ended" }); end(why); },
+    });
+    ws.onopen = () => { said = here(); rt.open(who, said); };
+    ws.onmessage = (e) => { if (!ended) rt.hear(String(e.data)); };
+    ws.onerror = () => end("The voice connection failed.");
+    ws.onclose = (e) => {
+      if (ended) return;
+      end(e.code === 1000 ? null : `The call was closed (${e.code}${e.reason ? `: ${String(e.reason).replace(/(sk-|sess_|ek_)[A-Za-z0-9_*-]+/g, "…").slice(0, 200)}` : ""}).`);
+    };
+  };
+
   (async () => {
-    const signed_url = await (deps.dial ?? (() => dialElevenLabs(hub)))();
+    const v: Voice = await (deps.pick ?? (deps.dial ? async () => ({ provider: "elevenlabs", key: "" }) as Voice : () => voiceFor(hub)))();
+    if (ended) return;
+    if ("error" in v) return end(v.error);
+    if (v.provider === "openai") return openai(v.key);
+    const signed_url = await (deps.dial ?? (() => dialElevenLabs(hub, v)))();
     if (ended) return;
     ws = new WebSocket(signed_url);
     ws.onopen = () => { said = here(); toVoice(opening(who, said)); };
@@ -159,7 +214,7 @@ export function voiceCall(hub: Hub, who: string, deps: CallDeps, page: Page) {
       else if (m.type === "client_tool_call") {
         const c = m.client_tool_call ?? {};
         tell({ type: "state", state: "thinking" });
-        const a = await shown(await voiceTool(String(c.tool_name ?? ""), c.parameters ?? {}, where, io), show);
+        const a = await answer(String(c.tool_name ?? ""), c.parameters ?? {});
         toVoice({ type: "client_tool_result", tool_call_id: c.tool_call_id, result: a.result, is_error: !!a.error });
       }
     };
@@ -199,7 +254,8 @@ export function voiceCall(hub: Hub, who: string, deps: CallDeps, page: Page) {
       if (ws?.readyState !== WebSocket.OPEN) return;
       const pcm = Buffer.from(data as ArrayBuffer);
       if (pcm.length > 256 * 1024 || pcm.length % 2) return;
-      ws.send(JSON.stringify({ user_audio_chunk: pcm.toString("base64") }));
+      if (rt) rt.mic(Buffer.from(up(new Uint8Array(pcm))).toString("base64"));
+      else ws.send(JSON.stringify({ user_audio_chunk: pcm.toString("base64") }));
     },
     end: () => end(),
   };
