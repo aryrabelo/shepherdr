@@ -92,7 +92,30 @@ OMP_OLD = ("--label herdr.agent=<codex or claude> -- <its command> \"<prompt>\"`
            "--ask-for-approval never` or `claude --permission-mode plan` (never")
 OMP_RULE = ("--label herdr.agent=<codex, claude or omp> -- <its command> \"<prompt>\"`, its command `codex --sandbox read-only "
             "--ask-for-approval never`, `claude --permission-mode plan` or `omp --tools read,grep,find,glob,ast_grep` (never")
-WORKER_MD = WORKER_MD_BEFORE_OMP.replace(OMP_OLD, OMP_RULE)
+WORKER_MD_BEFORE_REVIEW_START = WORKER_MD_BEFORE_OMP.replace(OMP_OLD, OMP_RULE)
+# Since herdr-task starts the reviewer (ASH-8): Codex gets the trust it needs, its first minute is watched,
+# and a reviewer that can't start gives way to the other CLI instead of a 10-minute wait.
+REVIEW_START_OLD = ("started as your child with `hc run --bg --name <your task id, lower case>-review --label "
+                    "\"herdr.task=$HERDR_BROWSER_TASK\" --label herdr.role=reviewer --label herdr.agent=<codex, claude or omp> -- "
+                    "<its command> \"<prompt>\"`, its command `codex --sandbox read-only --ask-for-approval never`, `claude "
+                    "--permission-mode plan` or `omp --tools read,grep,find,glob,ast_grep` (never `codex exec` or `claude -p`: nobody "
+                    "sees those). Its prompt gives it the brief, the diff against the base branch and "
+                    "~/.config/herdr-core/templates/reviewer.md, and asks for its findings as its last message. It shows in your chat "
+                    "as a subagent and ends with you. Wait for it")
+REVIEW_START_RULE = ("started as your child with the `herdr-task review-start` command given at the end of your brief: it runs "
+                     "`codex --sandbox read-only --ask-for-approval never`, `claude --permission-mode plan` or `omp --tools "
+                     "read,grep,find,glob,ast_grep` as <your task id, lower case>-review, labelled herdr.role=reviewer (never "
+                     "`codex exec` or `claude -p`: nobody sees those). Its prompt gives it the brief, the diff against the base "
+                     "branch and ~/.config/herdr-core/templates/reviewer.md, and asks for its findings as its last message. It shows "
+                     "in your chat as a subagent and ends with you. review-start watches its first minute: when it says the reviewer "
+                     "exited or stopped on a start screen (its screen's first lines say why), start the other CLI read-only instead "
+                     "(`--agent claude`, or `--agent codex` when Claude Code was the one) and say so in your summary; never answer a "
+                     "reviewer's start screen yourself. Wait for it")
+HELPER_OLD = "Any other helper agent you want (research, a second opinion) goes the same way, labelled herdr.role=helper."
+HELPER_RULE = ("Any other helper agent you want (research, a second opinion) is your hc child too: `hc run --bg --name <your task "
+               "id, lower case>-<what> --label \"herdr.task=$HERDR_BROWSER_TASK\" --label herdr.role=helper -- <its command> "
+               "\"<prompt>\"`.")
+WORKER_MD = WORKER_MD_BEFORE_REVIEW_START.replace(REVIEW_START_OLD, REVIEW_START_RULE).replace(HELPER_OLD, HELPER_RULE)
 
 REVIEWER_MD_BEFORE_SUBAGENT = """You review one Herdr task's work before it can merge. Read only: never edit files, commit or push.
 - Read the task, then the diff of its branch against its base, and run the project's checks.
@@ -119,7 +142,7 @@ OLD_WORKER_READY = """You work on one Herdr task. Stay within the task's scope a
 - When the work is finished, run the `herdr-task ready` command given at the end of your brief, with a short summary. That puts the task in Ready for the person, who accepts it. Never mark a task done yourself.
 """
 OLD_WORKER_MD = OLD_WORKER_READY.split("- When the work is finished")[0]
-OLD_WORKERS = (WORKER_MD_BEFORE_OMP, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
+OLD_WORKERS = (WORKER_MD_BEFORE_REVIEW_START, WORKER_MD_BEFORE_OMP, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
 
 
 TEMPLATE_HEADS = {

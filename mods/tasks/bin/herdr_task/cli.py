@@ -25,6 +25,7 @@ from .star import cmd_star
 from .home import cmd_home
 from .assistant_settings import cmd_session_note
 from .feedback import cmd_feedback
+from .reviewer import cmd_review_start
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -228,6 +229,11 @@ def main():
     c = cmd("reviewed", cmd_reviewed, "a task's agent records one review round of its current commit (Review: on): ready then "
                                       "accepts that commit; uses one of its Review rounds")
     c.add_argument("--report", help="the round's findings in a line (levels, what was fixed)")
+    c = cmd("review-start", cmd_review_start, "a task's agent starts its review's reviewer read-only, as its hc child (Review: on), "
+                                              "and watches its first minute: stuck on a start screen or exited, it says so")
+    c.add_argument("prompt", nargs="?", help="the reviewer's prompt: the brief, the diff against the base branch and the reviewer template")
+    c.add_argument("--prompt-file", help="the prompt from a file instead")
+    c.add_argument("--agent", choices=["codex", "claude", "omp"], help="another CLI than the Reviewer line's (its own defaults)")
     cmd("review-more", cmd_review_more, "the Assistant gives a task one more review round, once all are used (never its own agent)")
     c = cmd("status", cmd_status, "a task's agent says what it's doing now, at the start and each natural step: status 4 \"Fixing the two failing tests\" --done 40 --left 5m")
     c.add_argument("text", help=f"what it is doing, at most {LINE_MAX} characters (longer is cut at a word)")

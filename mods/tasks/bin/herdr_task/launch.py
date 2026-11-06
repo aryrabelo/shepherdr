@@ -28,7 +28,7 @@ from .browsers import browser_line, browser_path
 # without touching the person's CLI settings: Claude Code in the --settings it gets at launch,
 # Codex through a PermissionRequest hook given with -c (`herdr-task _allow` answers it).
 
-OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where"]
+OWN = ["ready", "reviewed", "review-start", "status", "alert", "feedback", "show", "list", "where"]
 # herdr-secret's agent commands (~/.config/herdr-app/bin/herdr-secret): asking for a secret and
 # using one by name never ask either, as Shepherdr's secret commands. Written by its full path or
 # its bare name. Reviewers get none (launch() skips own_argv for them; herdr-secret refuses them).
@@ -92,12 +92,21 @@ def own_argv(argv):
         # Codex runs a new hook only once trusted. This one hook's trust comes with it, for this
         # launch only: Codex's own key and hash for a -c hook (codex-rs/hooks discovery.rs
         # hook_hash, config fingerprint.rs version_for_toml), so no other hook is trusted by it.
-        ident = {"event_name": "permission_request", "hooks": [{"async": False, "command": hook, "timeout": 10, "type": "command"}]}
-        digest = hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        digest = hook_hash("permission_request", {"command": hook, "timeout": 10})
         key = "/<session-flags>/config.toml:permission_request:0:0"
         return out[:1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout=10}}]}}]",
-                          "-c", f"hooks.state={{{json.dumps(key)}={{trusted_hash=\"sha256:{digest}\"}}}}"] + out[1:]
+                          "-c", f"hooks.state={{{json.dumps(key)}={{trusted_hash={json.dumps(digest)}}}}}"] + out[1:]
     return out
+
+
+def hook_hash(event, hook):
+    """Codex's trust hash for one command hook, as its hooks.state trusted_hash holds it
+    (codex-rs/hooks discovery.rs hook_hash, config fingerprint.rs version_for_toml). Shepherdr's
+    hooks always give a timeout; 600 s, Codex's default, is unchecked. The reviewer's trust for
+    Shepherdr's own hook uses it too (reviewer.py)."""
+    ident = {"event_name": event, "hooks": [{"async": bool(hook.get("async", False)), "command": hook["command"],
+                                              "timeout": hook.get("timeout", 600), "type": "command"}]}
+    return "sha256:" + hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 # One plain word: no expansion, redirect, separator or line break outside quotes, nor $ or ` inside.
@@ -322,7 +331,9 @@ def closing_line(s, task, parent=None, argv=None):
     if on:
         text += (f" Review is on: after each review round, record it on the commit it reviewed with `{ht} reviewed {s.ref(task)} "
                  f"--folder {shlex.quote(s.loc['folder'])} --report \"<its findings in a line>\"` (at most {rounds} rounds); "
-                 f"ready refuses a final commit no round was recorded on.")
+                 f"ready refuses a final commit no round was recorded on. Start each round's reviewer with `{ht} review-start "
+                 f"{s.ref(task)} --folder {shlex.quote(s.loc['folder'])} \"<prompt>\"` (or `--prompt-file <file>`; `--agent claude` "
+                 f"or `--agent codex` for the other CLI): it tells you within a minute when the reviewer can't start.")
     text += (f" At the start and at each natural step, say how it's going: `{ht} status {s.ref(task)} --folder {shlex.quote(s.loc['folder'])} "
              f"\"<what you're doing now, at most {LINE_MAX} characters>\" --done <% of the whole task> --left <your best guess of how long is left, like 20m>`: "
              f"always give `--left`, from your very first status on, and update it at every step; a rough guess beats none.")
