@@ -21,16 +21,54 @@ def gh(*args, cwd=None):
 
 def github(s):
     """The repo on GitHub ("owner/name") when it has a GitHub remote and gh works there; asked
-    again after an hour. None: tasks merge locally."""
+    again after an hour (fine for what only looks: ready asks afresh, pr_repo()). None: tasks
+    merge locally."""
     if s.loc["kind"] != "repo" or not shutil.which(GH):
         return None
     g = s.data.get("github") or {}
     if g and now() - g.get("at", 0) < 3600000:
         return g.get("repo")
-    ok, out, _ = gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=s.loc["folder"])
-    s.data["github"] = {"repo": out if ok and out else None, "at": now()}
+    return pr_repo(s)["repo"]
+
+
+def pr_repo(s):
+    """Asked afresh (ASH-9: gh's default changed, and an hour of pull requests went to the old repo):
+    {"repo": the repo a task's pull request goes to, "default": gh's default, "pushed": the push
+    remote's repo, "remote": its name}. The repo is the one its branch is pushed to (remote_of()),
+    whatever gh's default (a fork's upstream, say); gh's default only when that remote isn't on
+    GitHub. repo None: gh doesn't work here, or there is no GitHub remote. Kept for github()."""
+    main = s.loc["folder"]
+    ok, out, _ = gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=main)
+    default = out if ok and out else None
+    remote = remote_of(main)
+    pushed = repo_of_url(git(main, "remote", "get-url", "--push", remote)[1]) if default else None
+    g = {"repo": pushed or default, "default": default, "pushed": pushed, "remote": remote, "at": now()}
+    s.data["github"] = g
     s.dirty = True
-    return s.data["github"]["repo"]
+    return g
+
+
+def repo_of_url(url):
+    """The GitHub repo of a remote's URL ("owner/name", "host/owner/name" off github.com) in its
+    https, ssh or scp (git@github.com:owner/name.git) form; None for a local path."""
+    url = (url or "").strip()
+    if "://" in url:
+        scheme, rest = url.split("://", 1)
+        if scheme == "file" or "/" not in rest:
+            return None
+        host, path = rest.split("/", 1)
+    elif ":" in url and "/" not in url.split(":", 1)[0]:
+        host, path = url.split(":", 1)
+    else:
+        return None
+    host = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
+    parts = [p for p in path.split("/") if p]
+    if not host or len(parts) < 2:
+        return None
+    name = parts[-1][:-4] if parts[-1].endswith(".git") else parts[-1]
+    repo = f"{parts[-2]}/{name}"
+    # An ssh Host alias (github-work, no dot) stands for github.com.
+    return repo if host in ("github.com", "ssh.github.com", "www.github.com") or "." not in host else f"{host}/{repo}"
 
 
 def remote_of(main):
@@ -70,7 +108,7 @@ def pr_open(s, task, repo, summary=None):
     ok, out, err = gh("pr", "create", "--repo", repo, "--head", br, "--base", task.get("base") or "main",
                       "--title", f"{s.ref(task)} {task['title']}", "--body", body)
     if not ok or not out:
-        raise Fail(f"Couldn't open a pull request: {err}")
+        raise Fail(f"Couldn't open a pull request on {repo}: {err}")
     url = out.split()[-1]
     task["pr"] = {"number": int(url.rstrip("/").split("/")[-1]), "url": url, "repo": repo}
     return task["pr"]
