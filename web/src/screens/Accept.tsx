@@ -19,6 +19,8 @@ type Evidence = {
   commits?: { count: number; list: { sha: string; subject: string }[] }
   diff?: { files: number; added: number; removed: number; list: { path: string; added: number; removed: number }[] } | null
   checks?: { state: 'passed' | 'failed' | 'running' | 'none' | 'unknown'; text: string }
+  // a worktree task's: its branch, its base, its pull request and that pull request's own base when it isn't the task's
+  branches?: { from: string; into: string; pr?: { number: number; url?: string } | null; pr_into?: string }
 }
 type Shown = { ref: string; title: string; state: string; status_text?: string; accepted_at?: number; evidence?: Evidence }
 
@@ -42,6 +44,25 @@ function Section({ label, children }: { label: string; children: React.ReactNode
       <h3 className="text-[0.8125rem] font-medium text-fg3 phone:text-sm">{label}</h3>
       {children}
     </section>
+  )
+}
+
+// Where it goes, above the changes, as the window's: "task/4-doctor → ary/main" and its pull request (on GitHub); when
+// the pull request goes into another branch than the task's base, that one, said so under it
+function Branches({ b }: { b: NonNullable<Evidence['branches']> }) {
+  const note = A.branchNote(b)
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <p className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs/5">{A.branchLine(b)}</span>
+        {b.pr?.url ? (
+          <a href={b.pr.url} target="_blank" rel="noreferrer" className="press-dim flex shrink-0 items-center gap-1 text-xs text-fg3 hover:text-fg">
+            {A.prLabel(b.pr)}<OpenIcon className="size-3 shrink-0" />
+          </a>
+        ) : null}
+      </p>
+      {note ? <p className="text-xs text-work-fg">{note}</p> : null}
+    </div>
   )
 }
 
@@ -145,7 +166,9 @@ export function AcceptCard() {
         {!t ? <p className={error ? 'text-need-fg' : 'text-fg3'} role={error ? 'alert' : undefined}>{error ?? A.ACCEPT.reading}</p> : (
           <>
             <p className={clsx('max-w-[560px] text-pretty', !w.summary && 'text-fg3')}>{w.summary || A.ACCEPT.noSummary}</p>
-            <Section label={A.ACCEPT.changes}><Changes e={e} /></Section>
+            <Section label={A.ACCEPT.changes}>
+              {e.branches ? <div className="flex min-w-0 flex-col gap-2"><Branches b={e.branches} /><Changes e={e} /></div> : <Changes e={e} />}
+            </Section>
             <Section label={A.ACCEPT.checks}>
               <p className="flex items-center gap-2">
                 {e.checks && e.checks.state !== 'none' ? <span className={clsx('size-[7px] shrink-0 rounded-full', CHECK[e.checks.state])} /> : null}

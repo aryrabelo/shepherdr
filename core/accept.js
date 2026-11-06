@@ -32,6 +32,12 @@ export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many
 export const commitsLine = (n) => plural(n, "commit");
 export const filesLine = (n) => `${plural(n, "file")} changed`;
 export const moreLine = (n) => `And ${n} more`;
+// Where a worktree task's work goes, from evidence.branches = { from, into, pr?, pr_into? }: "task/4-doctor → ary/main",
+// into its pull request's own base when GitHub says it isn't the task's (and branchNote says so); its pull request as
+// "PR #12". A task without branches (it works in the folder itself, or no git) shows none of it.
+export const branchLine = (b) => (b?.from ? `${b.from} → ${b.pr_into || b.into}` : "");
+export const branchNote = (b) => (b?.from && b.pr_into ? `Its pull request goes into ${b.pr_into}, not ${b.into}.` : "");
+export const prLabel = (pr) => (pr?.number ? `PR #${pr.number}` : "");
 // A proof artifact's title without its task's ref ("HERD-4: Login works" -> "Login works").
 export const proofTitle = (title) => String(title ?? "").replace(/^[A-Z]+-\d+:\s*/, "");
 
