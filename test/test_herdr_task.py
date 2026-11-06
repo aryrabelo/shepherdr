@@ -1460,6 +1460,122 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.assertEqual(self.tick_once(), ("done", True))
 
 
+class PullRequestRepo(unittest.TestCase):
+    """ASH-9: a task's pull request goes to the repo its branch is pushed to (the push remote), asked
+    afresh at ready, never the hour-old answer nor gh's default when they differ (said so), and a
+    failure names the repo. A throwaway git repo with GitHub-looking remotes; gh and the push are faked."""
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        sys.path.insert(0, BIN)
+        import herdr_task.commands as commands
+        import herdr_task.github as github
+        self.commands, self.github_mod = commands, github
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.main, wt = os.path.join(self.root, "repo"), os.path.join(self.root, "wt")
+        self.git(self.root, "init", "-q", "-b", "main", self.main)
+        for k, v in (("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
+            self.git(self.main, "config", k, v)
+        self.git(self.main, "commit", "-q", "--allow-empty", "-m", "base")
+        self.git(self.main, "worktree", "add", "-q", "-b", "task/1", wt, "HEAD")
+        self.git(wt, "commit", "-q", "--allow-empty", "-m", "the work")
+        self.store = Store([{"id": 1, "title": "Reactions", "state": "running", "mode": "worktree", "worktree": wt,
+                             "branch": "task/1", "base": "main", "prompt": "Do it."}])
+        self.store.loc["folder"] = self.main
+        self.task = self.store.data["tasks"][0]
+        self.default, self.calls, self.create_fails = None, [], False
+        real_git = github.git
+
+        def git(cwd, *a):  # the push goes nowhere (the remotes are GitHub's); everything else is real git
+            if a[:1] == ("push",):
+                self.calls.append(("push", a[-2]))
+                return True, "", ""
+            return real_git(cwd, *a)
+
+        def gh(*a, cwd=None):
+            if a[:2] == ("repo", "view"):
+                return True, self.default, ""
+            if a[:2] == ("pr", "list"):
+                return True, "[]", ""
+            if a[:2] == ("pr", "create"):
+                repo = a[a.index("--repo") + 1]
+                self.calls.append(("create", repo))
+                if self.create_fails:
+                    return False, "", "Head sha can't be blank"
+                return True, f"https://github.com/{repo}/pull/9", ""
+            return True, "", ""
+        for mod, name, value in ((github, "gh", gh), (github, "git", git), (github, "GH", sys.executable),
+                                 (commands, "merge_policy", lambda s, t: "ask")):
+            p = mock.patch.object(mod, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    def remote(self, name, url):
+        self.git(self.main, "remote", "add", name, url)
+
+    def test_a_changed_gh_default_is_asked_afresh(self):
+        # gh's default was the upstream an hour ago; the clone's default and push remote are the fork now.
+        self.remote("origin", "git@github.com:aryrabelo/shepherdr.git")
+        self.store.data["github"] = {"repo": "eliasstravik/shepherdr", "at": self.github_mod.now()}
+        self.default = "aryrabelo/shepherdr"
+        msg = self.commands.finalize(self.store, self.task)
+        self.assertIn(("create", "aryrabelo/shepherdr"), self.calls)
+        self.assertEqual(self.task["pr"]["repo"], "aryrabelo/shepherdr")
+        self.assertIn("pull request #9", msg)
+        self.assertNotIn("gh's default", msg)
+        self.assertEqual(self.github_mod.github(self.store), "aryrabelo/shepherdr")  # the views' cache too
+
+    def test_a_fork_with_upstream_opens_it_on_the_fork(self):
+        # gh picks upstream as its default; the branch is pushed to origin, the fork.
+        self.remote("origin", "https://github.com/aryrabelo/shepherdr.git")
+        self.remote("upstream", "https://github.com/eliasstravik/shepherdr.git")
+        self.default = "eliasstravik/shepherdr"
+        msg = self.commands.finalize(self.store, self.task)
+        self.assertEqual(self.calls, [("push", "origin"), ("create", "aryrabelo/shepherdr")])
+        self.assertIn("pushed to aryrabelo/shepherdr (origin)", msg)
+        self.assertIn("not on gh's default eliasstravik/shepherdr", msg)
+
+    def test_a_failure_names_the_repo_it_tried(self):
+        self.remote("origin", "git@github.com:aryrabelo/shepherdr.git")
+        self.remote("upstream", "git@github.com:eliasstravik/shepherdr.git")
+        self.default, self.create_fails = "eliasstravik/shepherdr", True
+        msg = self.commands.finalize(self.store, self.task)
+        self.assertIn("Couldn't open a pull request on aryrabelo/shepherdr: Head sha can't be blank", self.task["attention"])
+        self.assertIn("not on gh's default eliasstravik/shepherdr", msg)
+
+    def test_a_push_url_wins_over_the_fetch_url(self):
+        self.remote("origin", "https://github.com/eliasstravik/shepherdr.git")
+        self.git(self.main, "remote", "set-url", "--push", "origin", "git@github.com:aryrabelo/shepherdr.git")
+        self.default = "eliasstravik/shepherdr"
+        self.commands.finalize(self.store, self.task)
+        self.assertIn(("create", "aryrabelo/shepherdr"), self.calls)
+
+    def test_a_remote_off_github_keeps_gh_default(self):
+        self.remote("origin", os.path.join(self.root, "bare.git"))
+        self.default = "o/r"
+        self.commands.finalize(self.store, self.task)
+        self.assertIn(("create", "o/r"), self.calls)
+
+    def test_no_gh_no_pull_request(self):
+        self.remote("origin", "git@github.com:aryrabelo/shepherdr.git")
+        self.default = ""  # gh repo view failed: gh doesn't work here
+        self.commands.finalize(self.store, self.task)
+        self.assertNotIn("pr", self.task)
+
+    def test_urls(self):
+        of = self.github_mod.repo_of_url
+        for url, repo in (("git@github.com:a/b.git", "a/b"), ("https://github.com/a/b", "a/b"),
+                          ("https://user@github.com/a/b.git/", "a/b"), ("ssh://git@ssh.github.com:443/a/b.git", "a/b"),
+                          ("git@github-work:a/b.git", "a/b"), ("https://ghe.example.com/a/b.git", "ghe.example.com/a/b"),
+                          ("/tmp/bare.git", None), ("file:///tmp/a/b.git", None), ("../b", None), ("", None)):
+            self.assertEqual(of(url), repo, url)
+
+
 class AcceptCardBranches(unittest.TestCase):
     """ASH-6: the Accept card says where the work goes: the task's branch into its base, and into its pull request's
     real base on GitHub when that differs (said so). A task in the folder itself shows none of it. A throwaway git

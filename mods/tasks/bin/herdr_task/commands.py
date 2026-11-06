@@ -19,7 +19,7 @@ from .agents import (
     agent_running, busy_again, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX, WORKING_AGAIN,
 )
 from .sessions import refresh_sessions
-from .github import already_merged, finish, gh, github, merged_here, own_work, pr_adopt, pr_open, pr_pending, pr_problem, pr_view, update_main, watch_main
+from .github import already_merged, finish, gh, github, merged_here, own_work, pr_adopt, pr_open, pr_repo, pr_pending, pr_problem, pr_view, update_main, watch_main
 from .launch import (
     base_ref, brief, caller_labels, caller_space, current_base, default_space, folder_for, handoff, launch, name_tabs,
     own_path, parent_for, resume_argv, retag_tabs, set_branch, tab_title, task_tabs,
@@ -632,13 +632,19 @@ def finalize(s, t):
         return msg + " The person accepts it in the Tasks panel."
     repo = github(s) if wt and os.path.isdir(wt) else None
     if repo:
+        # ASH-9: the repo its branch is pushed to, asked now (never the hour-old answer).
+        g = pr_repo(s)
+        repo, note = g["repo"] or repo, ""
+        if g["pushed"] and g["default"] and g["pushed"].lower() != g["default"].lower():
+            note = (f" Its branch is pushed to {g['pushed']} ({g['remote']}), so its pull request is there,"
+                    f" not on gh's default {g['default']}.")
         try:
             pr = pr_open(s, t, repo, t.get("summary"))
             pr["checked"] = 0
-            msg = f"{s.ref(t)} is ready: pull request #{pr['number']}, {pr['url']}."
+            msg = f"{s.ref(t)} is ready: pull request #{pr['number']}, {pr['url']}.{note}"
         except Fail as e:
             t["attention"] = str(e)
-            return f"{s.ref(t)} is ready, but: {e} Tell the person."
+            return f"{s.ref(t)} is ready, but: {e}{note} Tell the person."
     policy = merge_policy(s, t)
     if policy in ("auto", "checks"):
         t["auto_merge"] = policy
