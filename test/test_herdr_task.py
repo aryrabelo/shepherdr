@@ -1460,6 +1460,63 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.assertEqual(self.tick_once(), ("done", True))
 
 
+class AcceptCardBranches(unittest.TestCase):
+    """ASH-6: the Accept card says where the work goes: the task's branch into its base, and into its pull request's
+    real base on GitHub when that differs (said so). A task in the folder itself shows none of it. A throwaway git
+    repo; gh is never run (pr_view mocked)."""
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        sys.path.insert(0, BIN)
+        import herdr_task.proof as proof
+        self.proof, self.mock = proof, mock
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        main, wt = os.path.join(self.root, "repo"), os.path.join(self.root, "wt")
+        git = lambda cwd, *a: subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True, check=True).stdout.strip()
+        git(self.root, "init", "-q", "-b", "ary/main", main)
+        for k, v in (("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
+            git(main, "config", k, v)
+        git(main, "commit", "-q", "--allow-empty", "-m", "base")
+        git(main, "worktree", "add", "-q", "-b", "task/4-doctor-explica", wt, "HEAD")
+        git(wt, "commit", "-q", "--allow-empty", "-m", "the work")
+        self.task = {"id": 4, "title": "Doctor", "state": "ready", "mode": "worktree", "worktree": wt,
+                     "branch": "task/4-doctor-explica", "base": "ary/main", "base_set": True,
+                     "start": git(main, "rev-parse", "HEAD"), "proof": {"id": "p", "title": "x"}}
+        self.store = Store([self.task])
+        self.store.loc["folder"] = main
+
+    def evidence(self, pr_base=None):
+        view, self.asked = ({"baseRefName": pr_base, "statusCheckRollup": []} if pr_base else None), 0
+
+        def pr_view(t):
+            self.asked += 1
+            return view
+        with self.mock.patch.object(self.proof, "pr_view", pr_view):
+            return self.proof.evidence(self.store, self.task)
+
+    def test_its_branch_into_its_base(self):
+        e = self.evidence()
+        self.assertEqual(e["branches"], {"from": "task/4-doctor-explica", "into": "ary/main", "pr": None})
+        self.assertEqual(e["commits"]["count"], 1)
+
+    def test_its_pull_request_and_its_real_base(self):
+        self.task["pr"] = {"number": 12, "url": "https://github.com/o/r/pull/12", "repo": "o/r"}
+        same = self.evidence("ary/main")["branches"]
+        self.assertEqual(same["pr"], {"number": 12, "url": "https://github.com/o/r/pull/12"})
+        self.assertNotIn("pr_into", same)
+        moved = self.evidence("main")
+        self.assertEqual((moved["branches"]["into"], moved["branches"]["pr_into"]), ("ary/main", "main"))
+        self.assertEqual((moved["checks"]["text"], self.asked), ("No checks on its pull request", 1))  # one ask, for both
+
+    def test_a_task_in_the_folder_itself_shows_none(self):
+        self.task.update(mode="here")
+        self.assertNotIn("branches", self.evidence())
+        self.store.loc["kind"] = "folder"
+        self.assertNotIn("branches", self.evidence())
+
+
 class TimeLeft(unittest.TestCase):
     """Every status gives the time left, a rough guess beats none (SHEP-13): the minutes show from
     the first one, one without --left asks for it, and every brief and template says so. In memory."""

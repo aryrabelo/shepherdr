@@ -152,7 +152,7 @@ PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED
 
 def pr_view(task):
     pr = task["pr"]
-    ok, out, _ = gh("pr", "view", str(pr["number"]), "--repo", pr["repo"], "--json", "state,mergeable,headRefOid,statusCheckRollup,mergeCommit")
+    ok, out, _ = gh("pr", "view", str(pr["number"]), "--repo", pr["repo"], "--json", "state,mergeable,headRefOid,statusCheckRollup,mergeCommit,baseRefName")
     try:
         return json.loads(out) if ok else None
     except ValueError:

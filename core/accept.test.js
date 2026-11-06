@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACCEPT, words, readable, whereNow, commitsLine, filesLine, moreLine, proofTitle } from "./accept.js";
+import { ACCEPT, words, readable, whereNow, commitsLine, filesLine, moreLine, proofTitle, branchLine, branchNote, prLabel } from "./accept.js";
 
 const root = join(import.meta.dir, "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
@@ -28,10 +28,26 @@ test("the card's words", () => {
   expect(proofTitle("HERD-4: Login works")).toBe("Login works");
 });
 
+test("where the work goes: its branch into its base, or into its pull request's own base, said so", () => {
+  const b = { from: "task/4-doctor-explica", into: "ary/main", pr: { number: 12, url: "https://github.com/o/r/pull/12" } };
+  expect(branchLine(b)).toBe("task/4-doctor-explica → ary/main");
+  expect(branchNote(b)).toBe("");
+  expect(prLabel(b.pr)).toBe("PR #12");
+  const moved = { ...b, pr_into: "main" };
+  expect(branchLine(moved)).toBe("task/4-doctor-explica → main");
+  expect(branchNote(moved)).toBe("Its pull request goes into main, not ary/main.");
+  // a task in the folder itself, or without git: nothing new
+  expect([branchLine(undefined), branchNote(undefined), prLabel(null)]).toEqual(["", "", ""]);
+});
+
 test("the window's card and the web's read their words from here, not their own", () => {
   const mod = read("mods/accept-card/main.js"), web = read("web/src/screens/Accept.tsx");
   expect(mod).toContain('from "./core/accept.js"');
   expect(web).toContain("@core/accept.js");
+  for (const f of ["branchLine(", "branchNote(", "prLabel("]) {
+    expect(mod).toContain(f);
+    expect(web).toContain(f);
+  }
   for (const w of ["Reading the task", "No summary.", "No proof artifact.", "Already accepted.", "Not ready right now"]) {
     expect(mod).not.toContain(w);
     expect(web).not.toContain(w);

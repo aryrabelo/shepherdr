@@ -16,7 +16,7 @@ import { openViewer } from "./artview.js";
 import { appHome, closeOverlay, exec, notify, openOverlay, props, shared, setShared, theme } from "herdr";
 import { dialogFooter, green, red, amber, H, RADIUS, TEXT } from "./ui.js";
 // The card's words, the summary cut and the details as bullets: core/accept.js, shared with the web app's card.
-import { ACCEPT, words, readable, commitsLine, filesLine, moreLine, proofTitle, whereNow } from "./core/accept.js";
+import { ACCEPT, words, readable, commitsLine, filesLine, moreLine, proofTitle, whereNow, branchLine, branchNote, prLabel } from "./core/accept.js";
 
 export { words, readable };
 
@@ -225,6 +225,21 @@ export default class AcceptCard extends View {
         .when(d.files > d.list.length, (el) => el.child(div().text_size(12).text_color(t.dim).child(moreLine(d.files - d.list.length))))));
   }
 
+  // Where it goes, above the changes: "task/4-doctor → ary/main" and its pull request (opens on GitHub); when the
+  // pull request goes into another branch than the task's base, that one, said so under it.
+  branches(t, b) {
+    const pr = b.pr, note = branchNote(b);
+    return v_flex().gap(3).min_w(0)
+      .child(h_flex().gap(8).min_w(0).items_center()
+        .child(div().flex_1().min_w(0).truncate().font_family(MONO).text_size(12).text_color(t.foreground).child(branchLine(b)))
+        .when(Boolean(pr?.url), (el) => el.child(h_flex().id("accept-pr").flex_none().gap(4).items_center()
+          .text_size(TEXT.label).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(pr.url); })
+          .child(div().child(prLabel(pr)))
+          .child(svg("mods/chat-image/external-link.svg").size(12).flex_none()))))
+      .when(Boolean(note), (el) => el.child(div().text_size(12).text_color(amber()).child(note)));
+  }
+
   checks(t, e) {
     const c = e.checks ?? { state: "none", text: ACCEPT.noChecks };
     const color = { passed: green(), failed: red(), running: amber(), unknown: red() }[c.state] ?? t.muted;
@@ -287,7 +302,8 @@ export default class AcceptCard extends View {
       : v_flex().w_full().gap(16).pb(4)
         .child(div().max_w(560).text_size(TEXT.body).line_height("20px").text_color(w.summary ? t.foreground : t.muted)
           .child(w.summary || ACCEPT.noSummary))
-        .child(this.section(t, ACCEPT.changes, this.changes(t, e)))
+        .child(this.section(t, ACCEPT.changes, !e.branches ? this.changes(t, e)
+          : v_flex().gap(8).min_w(0).child(this.branches(t, e.branches)).child(this.changes(t, e))))
         .child(this.section(t, ACCEPT.checks, this.checks(t, e)))
         .child(this.section(t, ACCEPT.proof, this.proof(t, e)))
         .when(Boolean(w.details), (el) => el.child(this.detailsSection(t, w.details)));

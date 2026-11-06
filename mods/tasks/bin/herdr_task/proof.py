@@ -64,12 +64,12 @@ def numstat(out, files):
             cur[1] += int(r) if r.isdigit() else 0
 
 
-def checks_of(t):
+def checks_of(t, v=None):
     """GitHub's checks on its pull request, in words: {state, text}; failed and running say so,
-    so a green one is never assumed."""
+    so a green one is never assumed. v: pr_view's answer, when already asked."""
     if not t.get("pr"):
         return {"state": "none", "text": "No GitHub checks here"}
-    v = pr_view(t)
+    v = v or pr_view(t)
     if not v:
         return {"state": "unknown", "text": "Couldn't ask GitHub"}
     rows = v.get("statusCheckRollup") or []
@@ -85,11 +85,23 @@ def checks_of(t):
     return {"state": "passed", "text": f"All {len(rows)} passed"}
 
 
+def branches_of(t, base, v=None):
+    """Where Accept takes the work: {from, into, pr, pr_into?}: the task's branch, its base (what Accept merges
+    into), its pull request ({number, url}, or None) and, only when GitHub says that pull request goes into another
+    branch, that branch (v: pr_view's answer)."""
+    pr = t.get("pr") or None
+    out = {"from": t["branch"], "into": base, "pr": {"number": pr["number"], "url": pr.get("url")} if pr else None}
+    real = (v or {}).get("baseRefName")
+    if real and real != base:
+        out["pr_into"] = real
+    return out
+
+
 def evidence(s, t):
     """What an Accept card shows: {summary, details, commits: {count, list}, diff: {files, added, removed,
-    list} or None, git (False: not a git folder), scope, checks, proof}."""
+    list} or None, git (False: not a git folder), scope, branches (a worktree task's: branches_of), checks, proof}."""
     main, out = s.loc["folder"], {"summary": t.get("summary"), "details": t.get("details"), "proof": t.get("proof") or find_proof(s, t)}
-    commits, files = [], {}
+    commits, files, pr = [], {}, None
     fmt = "--format=%h%x09%s"
     if s.loc["kind"] != "repo":
         out.update(git=False, commits={"count": 0, "list": []}, diff=None, checks=checks_of(t))
@@ -109,6 +121,8 @@ def evidence(s, t):
             else:
                 files = None
         out["scope"] = f"{t['branch']} into {base}"
+        pr = pr_view(t) if t.get("pr") else None
+        out["branches"] = branches_of(t, base, pr)
     else:
         # In the folder itself: the commits made here while it worked (other work committed here
         # meanwhile counts too, so the card says "while it worked").
@@ -127,5 +141,5 @@ def evidence(s, t):
     out["diff"] = None if files is None else {
         "files": len(files), "added": sum(v[0] for v in files.values()), "removed": sum(v[1] for v in files.values()),
         "list": [{"path": p, "added": v[0], "removed": v[1]} for p, v in sorted(files.items(), key=lambda x: -(x[1][0] + x[1][1]))[:FEW]]}
-    out["checks"] = checks_of(t)
+    out["checks"] = checks_of(t, pr)
     return out
