@@ -42,6 +42,8 @@ import * as strips from "./strips.js";
 import { button, red, green, amber, H, RADIUS, TEXT, toast, toastWho, plainError } from "./ui.js";
 import { openViewer, noteChatArea } from "./artview.js";
 import { KEY_HOLDER, holdKeys, keysElsewhere } from "./keyholder.js";
+// Cmd+C on text selected in the messages: the keyboard moves off the box (core/text-select.js, ASH-10).
+import { selects, readingKey } from "./core/text-select.js";
 import { SecretCards } from "./secret-card.js";
 import * as secrets from "./secrets.js";
 import { taskDot, ownProgress } from "./dot.js";
@@ -267,7 +269,7 @@ export default class Chat extends View {
     this.box.set_rows(1);
     // Ctrl+Enter (the textarea's secondary submit): held until the agent is free.
     this.box.on("submit", (e, cx) => { if (!e?.shift) this.enter(cx, Boolean(e?.secondary)); });
-    this.box.on("focus", (_e, cx) => { this.focused = true; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
+    this.box.on("focus", (_e, cx) => { this.focused = true; this.reading = false; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
     this.box.on("blur", (_e, cx) => { this.focused = false; noteChatArea(this.areaKey(), { focus: false, at: Date.now() }); cx.notify(); });
     this.box.on("change", (_e, cx) => {
       // A big paste (over 8 KB or 200 lines) becomes a text file to send, not text in the box.
@@ -446,6 +448,10 @@ export default class Chat extends View {
     });
     // In a call the box is the call: this handle takes its keys (M mutes).
     this.callFocus = cx.focus_handle();
+    // Text selected in the messages: this handle takes the keyboard from the box, so Cmd+C reaches the window's
+    // copy of the selection instead of the box's own (core/text-select.js). reading: it holds the keyboard now.
+    this.readFocus = cx.focus_handle();
+    this.reading = false;
     // Drafts and dictation belong to the agent's first address (its origin), so they survive
     // Chat ⇄ Terminal, restarts from here, and app restarts.
     const labels = terminals().find((x) => x.address === this.addr)?.labels ?? {};
@@ -2109,6 +2115,32 @@ export default class Chat extends View {
       this.queue.push({ id: `r${Date.now()}`, text: line, files: [], quote: null, raw: true, label: on ? `${emoji} reaction` : `${emoji} reaction removed` });
       this.saveSoon(cx);
     } else personHc(["send", this.addr, line]);
+    cx.notify();
+  }
+
+  // A press in the messages that selected text (core/text-select.js): the keyboard leaves the box, whose Cmd+C
+  // would copy its own (empty) selection, for an element of the chat's own: the window's Cmd+C copies the text.
+  selectedUp(e, cx) {
+    if (!selects(this.bodyDown, e.position, this.press?.at)) return;
+    this.bodyDown = null;
+    this.reading = true;
+    this.readFocus.focus();
+    cx.notify();
+  }
+
+  // A key while the messages hold the keyboard: typing, Escape or Cmd+V go back to the box.
+  readingKey(e, cx) {
+    const k = readingKey(e);
+    if (!k) return;
+    cx.stop_propagation();
+    this.reading = false;
+    this.box.focus();
+    if (k.act === "type") this.box.replace(k.text);
+    if (k.act === "paste") {
+      let text;
+      try { text = cx.read_from_clipboard(); } catch {}
+      if (text) this.box.replace(text);
+    }
     cx.notify();
   }
 
@@ -4001,12 +4033,14 @@ export default class Chat extends View {
     // The box also comes back after a notice (opening, restarting): it gets the keyboard then too.
     const showsBox = Boolean(this.addr) && this.phase === "ready";
     // Focus moves only outside render: from a timer callback right after it.
-    if (paneFocused && showsBox && (!this.wasFocused || !this.hadBox)) { cx.timer.after(0, () => this.box.focus()); cx.timer.after(600, () => this.box.focus()); }
+    // Not over a selection just made in the messages (reading): Cmd+C copies it from there. Leaving the pane ends that.
+    if (!paneFocused) this.reading = false;
+    if (paneFocused && showsBox && (!this.wasFocused || !this.hadBox)) { cx.timer.after(0, () => { if (!this.reading) this.box.focus(); }); cx.timer.after(600, () => { if (!this.reading) this.box.focus(); }); }
     // The pane focused again (a command, a click on its header) can leave the box without the
     // keyboard: give it back, unless the person just pressed something inside the chat.
     // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
     // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
-    else if (paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
+    else if (paneFocused && showsBox && !this.call && this.focused === false && !this.reading && Date.now() - (this.press?.at ?? 0) > 1500
       && !keysElsewhere(shared(KEY_HOLDER), this.areaKey())
       && Date.now() - (this.refocusAt ?? 0) > 1000) {
       this.refocusAt = Date.now();
@@ -4095,8 +4129,13 @@ export default class Chat extends View {
       .on_mouse_move((e) => { if (e.bounds) this.noteArea(e.bounds); })
       // Where a press was, for the action buttons under messages (rows can't take handlers).
       .on_mouse_down("left", (e) => { this.press = { x: e.local_position?.x, y: e.local_position?.y, at: Date.now() }; holdKeys(this.areaKey()); this.pressWin = e.position; this.keepIcons = null; if (e.bounds) this.noteArea(e.bounds); })
+      // A drag or a double click that selected text in the messages: the keyboard leaves the box for Cmd+C.
+      .on_mouse_up("left", (e, cx) => this.selectedUp(e, cx))
       // Files dropped anywhere on the chat go with the next message.
-      .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); });
+      .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); })
+      // What holds the keyboard after a selection in the messages: nothing to see, no presses of its own.
+      .child(div().id("chat-read").absolute().w(0).h(0).track_focus(this.readFocus).key_context("chat_read")
+        .on_key_down((e, cx) => this.readingKey(e, cx)));
 
     // Starting (or the new agent's log not there yet): the person's message shows at once.
     const starting = (this.phase === "starting" || (this.phase === "finding" && this.role && !this.path)) && this.pending.length > 0;
@@ -4173,7 +4212,7 @@ export default class Chat extends View {
           if (was && Math.abs(was - size.height) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
         })
         // How far down the list a press was, for the action bands (rows take no handlers).
-        .on_mouse_down("left", (e) => { this.bodyPress = e.local_position?.y; })
+        .on_mouse_down("left", (e) => { this.bodyPress = e.local_position?.y; this.bodyDown = { x: e.position?.x, y: e.position?.y, count: e.click_count ?? 1, at: Date.now() }; })
         // Rows' hover styles show on a redraw: one per 6 px the pointer moves down or up.
         .on_mouse_move((e, cx) => {
           const b = Math.floor((e.local_position?.y ?? 0) / 6);
