@@ -116,13 +116,44 @@ def settings_layers(s, space=None):
     return d.get("everywhere") or {}, machine or {}, pick or {}
 
 
-def settings_for(s, space=None):
+# The settings that shape a task's work, its Settings block's (review, its rounds, must-fix and
+# reviewer, merge, proof, the agent): a task keeps the ones it started with (start_settings), so
+# a change in Settings reaches only tasks that start after it, and what its brief says, ready,
+# review and merge all agree. Its base is kept when it's added (set_base); its own --set wins.
+SHAPING = {"tasks": ("review_rounds", "must_fix", "merge", "proof"), "reviewer": None, "worker": None}
+
+
+def start_settings(s, t, space=None):
+    """Keeps on task t its settings layers as they are now, only the parts that shape its work."""
+    out = []
+    for layer in settings_layers(s, space or t.get("space")):
+        part = {}
+        for sec, keys in SHAPING.items():
+            v = layer.get(sec)
+            if isinstance(v, dict) and v:
+                v = {k: x for k, x in v.items() if keys is None or k in keys}
+                if v:
+                    part[sec] = v
+        out.append(part)
+    t["settings_at_start"] = out
+
+
+def task_layers(s, t, space=None):
+    """The settings layers that shape task t: the ones it started with, else (not started yet, or
+    started before Herdr kept them) the ones there are now."""
+    kept = t.get("settings_at_start")
+    if isinstance(kept, list) and len(kept) == 3 and t.get("state") not in ("todo", "scheduled", "queued"):
+        return tuple(x if isinstance(x, dict) else {} for x in kept)
+    return settings_layers(s, space or t.get("space"))
+
+
+def settings_for(s, space=None, layers=None):
     """The settings for this folder's tasks: Shepherdr settings' Everywhere, then this machine's,
     then the override of the space working in this folder (--space's when several do): the most
     specific wins. The window no longer writes agent or task values for a machine (only its
     machine-only rows, read by machine_limits/machine_option); ones set before still apply here. Written by the settings window (~/.herdr/shepherdr.json); herdr-task only
-    reads them."""
-    everywhere, machine, pick = settings_layers(s, space)
+    reads them. `layers`: those to use instead (task_layers: a task's own from when it started)."""
+    everywhere, machine, pick = layers or settings_layers(s, space)
     out = {k: dict(v) for k, v in DEFAULTS.items()}
 
     def merge(part):
@@ -211,7 +242,7 @@ def worker_pick(s, task, space=None, agent=None):
     """What a task's agent runs on, {agent, model, effort, fast, perm}: Settings' worker, then the
     task's own --agent / --model / --effort, then `agent` (start --agent). Another CLI than
     Settings' starts from its own defaults (models and permissions differ per CLI)."""
-    pick = dict(settings_for(s, space)["worker"] or {})
+    pick = dict(settings_for(s, space, task_layers(s, task, space))["worker"] or {})
     for key in (task.get("agent"), agent):
         if key and key != pick.get("agent"):
             pick = {"agent": key}
@@ -335,11 +366,11 @@ def set_opts(t, args):
         set_task(t, k, v)
 
 
-def by_layer(s, space, section, key, value, default):
+def by_layer(s, space, section, key, value, default, layers=None):
     """Who set a setting that differs from Herdr's default: "folder", "machine", "all", or None."""
     if value == default:
         return None
-    everywhere, machine, mine = settings_layers(s, space)
+    everywhere, machine, mine = layers or settings_layers(s, space)
     for by, layer in (("folder", mine), ("machine", machine), ("all", everywhere)):
         if key in ((layer.get(section) or {}) if key else {}) or (not key and layer.get(section)):
             return by
@@ -355,9 +386,13 @@ def other_cli(agent):
 def task_settings(s, t, space=None, argv=None):
     """The settings that shape this task's work, each {label, text, value, by}."""
     space = space or t.get("space")
-    cfg = settings_for(s, space)
+    layers = task_layers(s, t, space)
+    cfg = settings_for(s, space, layers)
     k, sets = cfg["tasks"], t.get("set") or {}
     lines = []
+
+    def set_by(section, key, value, default):
+        return by_layer(s, space, section, key, value, default, layers)
 
     def add(label, text, value, by):
         lines.append({"label": label, "text": text, "value": value, "by": by})
@@ -368,7 +403,7 @@ def task_settings(s, t, space=None, argv=None):
     elif "review_rounds" in sets:
         on, rev_by = sets["review_rounds"] > 0, "task"
     else:
-        on, rev_by = rounds_cfg > 0, by_layer(s, space, "tasks", "review_rounds", rounds_cfg > 0, False)
+        on, rev_by = rounds_cfg > 0, set_by("tasks", "review_rounds", rounds_cfg > 0, False)
     here = t.get("mode") != "worktree"
     add("Review", "off" if not on else "on", on, rev_by)
     # What it runs on: the given argv, else its last agent's, else what it would start with.
@@ -379,7 +414,7 @@ def task_settings(s, t, space=None, argv=None):
         if t.get("reviewer") and t["reviewer"] != rv.get("agent"):
             rv = {"agent": t["reviewer"]}
         rv_by = "task" if any(t.get(f) for f in ("reviewer", "reviewer_model", "reviewer_effort")) else \
-            by_layer(s, space, "reviewer", None, bool(cfg.get("reviewer")), False)
+            set_by("reviewer", None, bool(cfg.get("reviewer")), False)
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
@@ -389,13 +424,13 @@ def task_settings(s, t, space=None, argv=None):
             text += " (the other CLI)" if who != agent else " (your own CLI: no other is installed)"
         add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort")}, rv_by)
         must = sets.get("must_fix") or (k.get("must_fix") if k.get("must_fix") in LEVELS else "major")
-        add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else by_layer(s, space, "tasks", "must_fix", must, "major"))
+        add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else set_by("tasks", "must_fix", must, "major"))
         rounds = sets.get("review_rounds") or (rounds_cfg if rounds_cfg > 0 else 3)
         more = int(t.get("review_rounds_added") or 0)
         add("Review rounds", f"at most {rounds + more}" + (f" ({more} added by the assistant)" if more else ""), rounds + more,
-            "task" if "review_rounds" in sets else by_layer(s, space, "tasks", "review_rounds", rounds, 3))
+            "task" if "review_rounds" in sets else set_by("tasks", "review_rounds", rounds, 3))
     policy = sets.get("merge") or (k.get("merge") if k.get("merge") in MERGE_WORDS else "ask")
-    m_by = "task" if "merge" in sets else by_layer(s, space, "tasks", "merge", policy, "ask")
+    m_by = "task" if "merge" in sets else set_by("tasks", "merge", policy, "ask")
     if here:
         add("Merge", "nothing to merge: you work in the folder itself, and the person accepts it", policy, m_by)
     else:
@@ -405,11 +440,11 @@ def task_settings(s, t, space=None, argv=None):
                 "folder" if t.get("base_by") == "space" else "task")
     proof = sets["proof"] == "on" if "proof" in sets else k.get("proof") is not False
     add("Proof", PROOF_WORDS["on" if proof else "off"], proof,
-        "task" if "proof" in sets else by_layer(s, space, "tasks", "proof", proof, True))
+        "task" if "proof" in sets else set_by("tasks", "proof", proof, True))
     model, effort = argv_model(argv)
     text = agent + (f", model {model}" if model else "") + (f", effort {effort}" if effort else "")
     a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort")) else \
-        by_layer(s, space, "worker", None, bool(cfg.get("worker")), False)
+        set_by("worker", None, bool(cfg.get("worker")), False)
     add("Agent", text, {"agent": agent, "model": model, "effort": effort}, a_by)
     return lines
 
@@ -460,7 +495,7 @@ def branch_pattern_problem(pattern):
 
 def merge_policy(s, t):
     """How a ready task merges: its own --set merge, else Settings' (auto, checks or ask)."""
-    p = (t.get("set") or {}).get("merge") or settings_for(s, t.get("space"))["tasks"].get("merge")
+    p = (t.get("set") or {}).get("merge") or settings_for(s, t.get("space"), task_layers(s, t))["tasks"].get("merge")
     return p if p in MERGE_WORDS else "ask"
 
 def agent_argv(key, argv_json=None):

@@ -95,6 +95,10 @@ lists it once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-
   the space's own). Autopilot's schedule and events from before Settings kept them (`~/.herdr/tasks/.autopilot.json`
   `everywhere`) and its heartbeat file (`~/.config/herdr-core/autopilot/everywhere.md`) are what Everywhere inherits
   until it's set.
+- A task keeps the settings that shape its work (review, its rounds, must fix and reviewer, merge, proof, agent) as
+  they were when it started (`settings_at_start`, read through `task_layers()`): its Settings block, `ready`'s review
+  gate and its merge all follow those, so a change in Settings reaches only tasks that start after it. Its own `--set`
+  still wins, and `edit --set` still changes it; its base is kept when it's added.
 
 ## Reactions
 
@@ -138,7 +142,8 @@ then the space's own), without guessing (`herdr_task/assistant_settings.py`):
 - **Changed while it runs** (in the window or on the web, Everywhere or the space): herdr-task's news pass (on a
   settings change, and every minute for Autopilot's switch) sends each live Assistant whose lines differ one message,
   a line per changed setting: `<herdr-setting name="review" value="on" scope="everywhere|space">Review is now on, …
-  Tasks you add from now on get it; running ones keep their brief.</herdr-setting>`, the last ending "reply only
+  Tasks you start from now on get it; running ones keep their brief.</herdr-setting>` (Base branch: "Tasks you add"),
+  the last ending "reply only
   `<hc no-reply/>`". A save that changes nothing for its space says nothing. One started before this (no label) gets the
   whole block once it has had a turn. Busy with the person: next pass.
 - **The chat hides them**, as every Herdr tag (`core/chat-log.js`), and the `<hc no-reply/>` after: a settings change
