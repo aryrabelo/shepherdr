@@ -48,6 +48,31 @@ test("the model button says what the window's does", () => {
     .toMatchObject({ agent: "codex", model: "gpt-5", effort: null, perm: "full" });
 });
 
+test("omp is offered as a task agent and reviewer once it lists its models (ASH-2)", () => {
+  const omp = { models: [{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: ["low", "high"] }] };
+  const c = S.choicesFrom({ claude: { model: "opus", per: {} }, codex: {}, omp }, { claude: true, codex: true, omp: true });
+  expect(c.menus.omp.name).toBe("omp");
+  expect(c.permDefault.omp).toBe("yolo");
+  expect(S.modelLabel(c.menus, { agent: "omp", model: "anthropic/claude-opus-5-5", effort: "high" })).toBe("Claude Opus 5.5 · High");
+  // not installed: not offered
+  expect(S.choicesFrom({ claude: {}, codex: {}, omp }, { claude: true, codex: true }).menus.omp).toBeUndefined();
+  // the Assistant's menu leaves omp out (its chat can't read omp's log); task agents and reviewers keep it
+  expect(Object.keys(S.roleMenus("coordinator", c.menus))).not.toContain("omp");
+  expect(Object.keys(S.roleMenus("worker", c.menus))).toContain("omp");
+  // an Assistant's own pickers (a new chat, the New space dialog) load the choices without omp; Settings asks for it
+  expect(read("lib/settings.js")).toContain("if (!tasks) installed.omp = false;");
+  expect(read("mods/chat/main.js")).toMatch(/loadChoices\(space\?\.machine \?\? null\)/);
+  expect(read("mods/shepherdr-settings/main.js")).toContain("loadChoices(null, { tasks: true })");
+  // omp's reviewer by default: Claude Code
+  expect(S.otherCli("omp")).toBe("claude");
+  expect(S.roleSel("reviewer", null, c, "omp")).toMatchObject({ unset: true, sel: { agent: "claude" } });
+  // full access stays full access, either way
+  expect(S.chooseModel(c.menus, c.permDefault, { agent: "claude", model: "opus", perm: "bypassPermissions" }, "omp", "anthropic/claude-opus-5-5"))
+    .toMatchObject({ agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" });
+  expect(S.chooseModel(c.menus, c.permDefault, { agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" }, "claude", "opus"))
+    .toMatchObject({ agent: "claude", perm: "bypassPermissions" });
+});
+
 test("Backup's warning, an add-on's line and Web's state, in the window's words", () => {
   const checks = { "": { codex: "ok" }, "vm-ssa": { codex: "signed-out" }, box: { codex: "missing" } };
   expect(S.backupProblem(checks, null, "codex")).toBe("Can't on vm-ssa: Codex is signed out. Can't on box: Codex is not installed.");

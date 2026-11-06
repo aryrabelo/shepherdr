@@ -248,7 +248,7 @@ def log_lines(log, size=262144):
 
 
 def log_tail(log, size=262144):
-    """The last lines of an agent's session log (Claude Code's or Codex's JSONL), parsed; [] when
+    """The last lines of an agent's session log (Claude Code's, Codex's or omp's JSONL), parsed; [] when
     it can't be read. A first line cut in half is left out."""
     out = []
     for raw in log_lines(log, size):
@@ -267,10 +267,12 @@ def agent_log(task, address=None):
 
 
 def said(d):
-    """An assistant line's words (Claude Code's, or Codex's response item), or None for anything else."""
+    """An assistant line's words (Claude Code's, Codex's response item or omp's message), or None for anything else."""
     msg = d.get("message") if d.get("type") == "assistant" and not d.get("isSidechain") and not d.get("isApiErrorMessage") else None
     if d.get("type") == "response_item" and (d.get("payload") or {}).get("role") == "assistant":
         msg = d["payload"]
+    if d.get("type") == "message" and isinstance(d.get("message"), dict) and d["message"].get("role") == "assistant":
+        msg = d["message"]
     if msg is None:
         return None
     parts = [c.get("text") for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") in ("text", "output_text")]
@@ -287,6 +289,13 @@ def from_person(d):
             return "\n".join(x.get("text") or "" for x in c if isinstance(x, dict) and x.get("type") == "text")
     if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "user_message":
         return str(d["payload"].get("message") or "")
+    m = d.get("message") if d.get("type") == "message" else None
+    if isinstance(m, dict) and m.get("role") == "user":  # omp (its tools' results are role toolResult)
+        c = m.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "\n".join(x.get("text") or "" for x in c if isinstance(x, dict) and x.get("type") == "text")
     return None
 
 

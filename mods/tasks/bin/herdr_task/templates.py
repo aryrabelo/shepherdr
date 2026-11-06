@@ -85,7 +85,14 @@ SUBAGENTS_RULE = ("read-only, as your own helper agent that people can watch and
 WORKER_MD_BEFORE_FEEDBACK = WORKER_MD_BEFORE_SUBAGENTS.replace(SUBAGENTS_OLD, SUBAGENTS_RULE)
 # Since agents offer feedback for Shepherdr itself through their Assistant (SHEP-78).
 FEEDBACK_RULE = ("- Shepherdr itself misbehaving, not your task's own code (a Shepherdr, herdr-task, web app or window feature that doesn't work as meant, a Herdr command failing like a bug, the person frustrated with Shepherdr, or a \"Shepherdr feedback:\" line in your reviewer's findings): run the `herdr-task feedback` command given at the end of your brief, once per problem, then carry on. It returns at once and your Assistant asks the person whether to file it; never file an issue yourself, and put no secrets, private paths or whole logs in it.\n")
-WORKER_MD = WORKER_MD_BEFORE_FEEDBACK + FEEDBACK_RULE
+WORKER_MD_BEFORE_OMP = WORKER_MD_BEFORE_FEEDBACK + FEEDBACK_RULE
+# Since omp is a task agent and reviewer too (ASH-2): its reviewer gets only omp's read-only tools (not lsp,
+# which can apply edits, nor bash): it reads the diff in its prompt.
+OMP_OLD = ("--label herdr.agent=<codex or claude> -- <its command> \"<prompt>\"`, its command `codex --sandbox read-only "
+           "--ask-for-approval never` or `claude --permission-mode plan` (never")
+OMP_RULE = ("--label herdr.agent=<codex, claude or omp> -- <its command> \"<prompt>\"`, its command `codex --sandbox read-only "
+            "--ask-for-approval never`, `claude --permission-mode plan` or `omp --tools read,grep,find,glob,ast_grep` (never")
+WORKER_MD = WORKER_MD_BEFORE_OMP.replace(OMP_OLD, OMP_RULE)
 
 REVIEWER_MD_BEFORE_SUBAGENT = """You review one Herdr task's work before it can merge. Read only: never edit files, commit or push.
 - Read the task, then the diff of its branch against its base, and run the project's checks.
@@ -112,7 +119,7 @@ OLD_WORKER_READY = """You work on one Herdr task. Stay within the task's scope a
 - When the work is finished, run the `herdr-task ready` command given at the end of your brief, with a short summary. That puts the task in Ready for the person, who accepts it. Never mark a task done yourself.
 """
 OLD_WORKER_MD = OLD_WORKER_READY.split("- When the work is finished")[0]
-OLD_WORKERS = (WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
+OLD_WORKERS = (WORKER_MD_BEFORE_OMP, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
 
 
 TEMPLATE_HEADS = {

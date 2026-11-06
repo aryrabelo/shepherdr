@@ -7,7 +7,7 @@ place, never overwrites what you made yourself, and keeps a backup of anything i
 
 - macOS or Linux, the Herdr app 0.1.12 or newer (`herdr-app --version`) with herdr-core 0.1.17 or newer
   (`hc --version`). Open Herdr once first, so it writes its home (`~/.config/herdr-app`).
-- python3 3.8 or newer, git, and Claude Code or Codex, installed and signed in.
+- python3 3.8 or newer, git, and Claude Code, Codex or omp, installed and signed in.
 - bun (the service and the web app; the installer installs it from bun.sh when it's missing), and Tailscale for the
   web app.
 - Optional, per add-on: `gh` (pull requests), agent-browser 0.41.1, node and Chrome (the task browser), bun,
@@ -39,7 +39,7 @@ What goes where:
 | Keys | merged into `~/.config/herdr-app/keys.json`: free keys added; a key you already use is asked about (kept without a terminal; `--keys ours` takes Shepherdr's) |
 | Role instructions | `~/.config/herdr-core/templates/{assistant,worker,reviewer}.md`; one you edited is kept, the new one goes beside it as `.new` |
 | Helpers on the PATH | links in `~/.local/bin`: `herdr-task`, `herdr-artifact`, `herdr-secret`, `herdr-browser`, `shepherdr` |
-| Question cards | hooks in `~/.claude/settings.json` (SessionStart, PermissionRequest) and `~/.codex/hooks.json` (SessionStart); `--no-hooks` leaves them out. Codex asks once to trust a new hook, and needs `hooks = true` in `~/.codex/config.toml` |
+| Question cards | hooks in `~/.claude/settings.json` (SessionStart, PermissionRequest) and `~/.codex/hooks.json` (SessionStart); `--no-hooks` leaves them out. Codex asks once to trust a new hook, and needs `hooks = true` in `~/.codex/config.toml`. omp has no hooks file: it gets the session note as an extension, `~/.omp/agent/extensions/herdr-session-note.ts` (no question cards yet) |
 | The guard (`--guard`, opt-in) | `~/.local/bin/herdr-app`: refuses to open a window with another HOME, `HERDR_APP_HOME` or core session (it can overwrite every machine's spaces); subcommands pass through |
 
 What it records: `~/.config/herdr-app/data/shepherdr/installed.json`, a sha256 per file it put there. Running it

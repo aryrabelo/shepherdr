@@ -27,7 +27,7 @@ if command -v codex >/dev/null 2>&1; then echo "codex=$($limit codex login statu
 """
 # In the login shell agents start in, so its PATH has what mise, nvm or a profile put there.
 LOGIN = 'if command -v bash >/dev/null 2>&1; then exec bash -lc "$1"; else exec sh -lc "$1"; fi'
-NAMES = {"claude": "Claude Code", "codex": "Codex"}
+NAMES = {"claude": "Claude Code", "codex": "Codex", "omp": "omp"}
 
 
 def cli_state(word):

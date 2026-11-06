@@ -69,3 +69,60 @@ test("every agent with a fast mode shows the Fast switch, and turning it off sti
   const claudeOff = argvFor({ agent: "claude", model: "opus", fast: false }, { agent: "claude", argv: ["claude"] }).argv;
   expect(current("claude", claudeOff, {}, { fast: true }).fast).toBe(false);
 });
+
+test("omp: its models from `omp models --json`, its levels, its argv (ASH-2)", () => {
+  const raw = JSON.stringify({ models: [{ selector: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", thinking: ["off", "low", "high", "auto"] }, { selector: "zai/glm-5", name: "GLM 5" }] });
+  for (const out of [`models\t${raw}`, `models\t${JSON.stringify([{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: ["low", "high"] }, { id: "zai/glm-5", label: "GLM 5", efforts: [] }])}`]) {
+    const d = parseDefaults("omp", out);
+    const m = menuFor("omp", d);
+    expect(m.name).toBe("omp");
+    expect(m.perms.map((p) => p.id)).toEqual(["always-ask", "write", "yolo"]);
+    expect(m.models[0]).toMatchObject({ id: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", efforts: ["low", "high"] });
+    expect(m.models[1].efforts).toEqual([]); // one that lists no thinking levels offers none
+    const c = current("omp", ["omp", "--model", "anthropic/claude-opus-5-5", "--thinking", "high", "--approval-mode", "write"], {}, d);
+    expect(c).toMatchObject({ agent: "omp", effort: "high", perm: "write" });
+    expect(line(c)).toBe("omp · Claude Opus 5.5 · High");
+  }
+  expect(parseDefaults("omp", "").models).toBeNull(); // omp not here
+  expect(argvFor({ agent: "omp", model: "zai/glm-5", effort: "low", perm: "yolo" }, { agent: "claude", argv: ["claude"] }).argv)
+    .toEqual(["omp", "--model", "zai/glm-5", "--thinking", "low", "--approval-mode", "yolo"]);
+});
+
+test("omp's model list is kept: a second read doesn't run omp again (ASH-2 review)", async () => {
+  const { DEFAULTS } = await import("./agents.js");
+  const { mkdtempSync, chmodSync, readFileSync, existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "omp-cache-")), bin = join(dir, "bin"), runs = join(dir, "runs");
+  await Bun.write(join(bin, "omp"), `#!/bin/sh\necho x >> "${runs}"\necho '{"models":[{"selector":"a/b","name":"B","thinking":["low"]}]}'\n`);
+  chmodSync(join(bin, "omp"), 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CACHE_HOME: join(dir, "cache") };
+  for (let i = 0; i < 2; i++) {
+    const p = Bun.spawnSync(["sh", "-c", DEFAULTS, "defaults", "omp"], { env });
+    expect(parseDefaults("omp", p.stdout.toString()).models).toEqual([{ id: "a/b", label: "B", efforts: ["low"], fast: false, defaultEffort: null }]);
+  }
+  expect(readFileSync(runs, "utf8").trim().split("\n").length).toBe(1);
+  expect(existsSync(join(dir, "cache", "herdr", "omp-models.json"))).toBe(true);
+});
+
+test("an hour-old omp list is shown at once and made again behind it (ASH-2 review round 2)", async () => {
+  const { DEFAULTS } = await import("./agents.js");
+  const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, utimesSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "omp-stale-")), bin = join(dir, "bin"), cache = join(dir, "cache", "herdr", "omp-models.json");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(dir, "cache", "herdr"), { recursive: true });
+  writeFileSync(join(bin, "omp"), `#!/bin/sh\nsleep 2\necho '{"models":[{"selector":"new/one","name":"New","thinking":[]}]}'\n`);
+  chmodSync(join(bin, "omp"), 0o755);
+  writeFileSync(cache, JSON.stringify([{ id: "old/one", label: "Old", efforts: [] }]) + "\n");
+  const old = new Date(Date.now() - 2 * 3600_000);
+  utimesSync(cache, old, old);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CACHE_HOME: join(dir, "cache") };
+  const t = Date.now();
+  const p = Bun.spawnSync(["sh", "-c", DEFAULTS, "defaults", "omp"], { env });
+  expect(Date.now() - t).toBeLessThan(1500); // read to its end, as the menus read it: no wait for omp
+  expect(parseDefaults("omp", p.stdout.toString()).models.map((m) => m.id)).toEqual(["old/one"]);
+  await Bun.sleep(2800);
+  expect(readFileSync(cache, "utf8")).toContain("new/one"); // made again for the next menu
+});

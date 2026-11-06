@@ -221,8 +221,8 @@ def os_words():
 
 
 def cli_version(agent):
-    """`<cli> --version`'s first line, for claude or codex; else ''."""
-    if agent not in ("claude", "codex"):
+    """`<cli> --version`'s first line, for claude, codex or omp; else ''."""
+    if agent not in ("claude", "codex", "omp"):
         return ""
     try:
         r = subprocess.run([agent, "--version"], capture_output=True, text=True, timeout=5)
@@ -232,8 +232,8 @@ def cli_version(agent):
 
 
 def environment(agent=None, surface=None):
-    agent = agent if agent in ("claude", "codex") else None
-    names = {"claude": "Claude Code", "codex": "Codex"}
+    agent = agent if agent in ("claude", "codex", "omp") else None
+    names = {"claude": "Claude Code", "codex": "Codex", "omp": "omp"}
     v = cli_version(agent) if agent else ""
     return {"shepherdr": shepherdr_version(), "os": os_words(),
             "agent": (f"{names[agent]} {v}".strip() if agent else "not known"),
@@ -306,7 +306,7 @@ def me():
 
 
 def agent_of(k):
-    """The CLI an agent runs (claude, codex), from its label or its program, else None."""
+    """The CLI an agent runs (claude, codex, omp), from its label or its program, else None."""
     from .settings import agent_key
     labels = k.get("labels") or {}
     argv = (k.get("foreground") or {}).get("argv") or k.get("argv") or []

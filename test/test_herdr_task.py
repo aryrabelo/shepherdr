@@ -1767,6 +1767,165 @@ class FastOffIsSaid(unittest.TestCase):
         self.assertIn('{"fastMode": false}', argv_for({"agent": "claude", "fast": False}))
 
 
+class OmpAgent(unittest.TestCase):
+    """ASH-2: omp (Oh My Pi) is a task agent and reviewer beside Claude Code and Codex: its argv from
+    Settings, its session found and resumed, its log read, its reviewer read-only. A throwaway HOME
+    with omp's session files; nothing is run."""
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.sessions as sessions
+        self.sessions, self.mock = sessions, mock
+        self.home = tempfile.mkdtemp()
+        p = mock.patch.object(sessions, "HOME", self.home)
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(sessions, "OMP_SESSIONS", os.path.join(self.home, ".omp", "agent", "sessions"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.at = 1793873842495
+        self.sid = "01a1b208-c3e3-7098-a05b-6687cc21a903"
+
+    def stamp(self, ms):
+        import datetime
+        return datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def omp_log(self, sid, at, first, cwd="/work/tree", folder="-work-tree"):
+        """A session file as omp writes it (18.17): title, session (its cwd), then the messages."""
+        d = os.path.join(self.home, ".omp", "agent", "sessions", folder)
+        os.makedirs(d, exist_ok=True)
+        f = os.path.join(d, f"2026-11-06T18-04-41-315Z_{sid}.jsonl")
+        with open(f, "w") as fh:
+            fh.write(json.dumps({"type": "title", "v": 1, "title": "x", "source": "auto"}) + "\n")
+            fh.write(json.dumps({"type": "session", "version": 3, "id": sid, "timestamp": self.stamp(at), "cwd": cwd}) + "\n")
+            fh.write(json.dumps({"type": "thinking_level_change", "id": "b0", "timestamp": self.stamp(at), "thinkingLevel": "high"}) + "\n")
+            fh.write(json.dumps({"type": "message", "id": "m1", "timestamp": self.stamp(at + 500), "message": {"role": "user", "content": [{"type": "text", "text": first}]}}) + "\n")
+            fh.write(json.dumps({"type": "message", "id": "m2", "timestamp": self.stamp(at + 900), "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "hm"}, {"type": "text", "text": "Done."}]}}) + "\n")
+        return f
+
+    def test_settings_build_its_argv(self):
+        from herdr_task.settings import agent_argv, argv_for, argv_model, worker_pick
+        self.assertEqual(argv_for({"agent": "omp", "model": "anthropic/claude-opus-5-5", "effort": "high", "perm": "write"}),
+                         ["omp", "--model", "anthropic/claude-opus-5-5", "--thinking", "high", "--approval-mode", "write"])
+        self.assertEqual(argv_for({"agent": "omp"}), ["omp"])  # omp's own defaults
+        self.assertEqual(agent_argv("omp"), ["omp"])
+        self.assertEqual(argv_model(["omp", "--model", "m1", "--thinking", "low"]), ("m1", "low"))
+
+        class S:
+            loc = {"folder": "/x", "kind": "repo"}
+        from unittest import mock
+        with mock.patch("herdr_task.settings.settings_for", return_value={"worker": {"agent": "claude", "model": "opus"}}):
+            # --agent omp on the task (or start) wins over Settings' worker, from omp's own defaults
+            self.assertEqual(worker_pick(S(), {"agent": "omp"}), {"agent": "omp"})
+            self.assertEqual(worker_pick(S(), {}, agent="omp", ), {"agent": "omp"})
+
+    def test_its_reviewer_is_the_other_cli(self):
+        from unittest import mock
+        import herdr_task.settings as st
+        with mock.patch.object(st.shutil, "which", lambda c: "/bin/" + c):
+            self.assertEqual(st.other_cli("omp"), "claude")
+            self.assertEqual(st.other_cli("claude"), "codex")
+        with mock.patch.object(st.shutil, "which", lambda c: None):
+            self.assertEqual(st.other_cli("omp"), "omp")
+
+    def test_resume_by_its_log_else_its_id(self):
+        from herdr_task.launch import resume_argv
+        log = self.omp_log(self.sid, self.at, "hi")
+        self.assertEqual(resume_argv(["omp", "--model", "m"], self.sid, log), ["omp", "--model", "m", "--resume", log])
+        self.assertEqual(resume_argv(["omp"], self.sid, "/gone.jsonl"), ["omp", "--resume", self.sid])
+        self.assertEqual(resume_argv(["omp"], self.sid), ["omp", "--resume", self.sid])
+        self.assertIsNone(resume_argv(["aider"], self.sid))
+
+    def test_revive_starts_it_again_on_its_session(self):
+        import herdr_task.revive as revive
+        kind, argv = revive.base_argv(["env", "X=1", "/home/me/.local/bin/omp", "--model", "m", "--thinking", "high", "--alias", "w",
+                                       "--resume", "/old.jsonl", "-c", "You work on one Herdr task."])
+        self.assertEqual((kind, argv), ("omp", ["/home/me/.local/bin/omp", "--model", "m", "--thinking", "high", "--alias", "w"]))
+        self.assertEqual(revive.resume_argv("omp", ["omp", "--model", "m"], self.sid, revive.CUT, "/l.jsonl"),
+                         ["omp", "--model", "m", "--resume", "/l.jsonl", revive.CUT])
+        self.assertEqual(revive.resume_argv("omp", ["omp"], self.sid), ["omp", "--resume", self.sid])
+        # omp's words for a session that's gone
+        self.assertTrue(revive.LOST.search('Error: Session "01a1b208-c3e3" not found.'))
+
+    def test_its_running_session_is_found(self):
+        log = self.omp_log(self.sid, self.at, "hi")
+
+        def run(args):
+            out = ""
+            if args[0] == "lsof":
+                out = f"p{args[2]}\nn/dev/ttys001\nn{self.home}/.omp/run/session-owners/{self.sid}.lock\nn{log}\n"
+            return subprocess.CompletedProcess(args, 0, out, "")
+        m = self.mock
+        with m.patch.object(self.sessions, "run", run), m.patch.object(self.sessions.shutil, "which", lambda c: "/usr/bin/" + c), \
+                m.patch.object(self.sessions.os.path, "isdir", lambda p: False if p.startswith("/proc/") else os.path.isdir(p)):
+            self.assertEqual(self.sessions.session_of(987654), (self.sid, log))
+
+        # only its owner lock open (between writes): the log by its id
+        def owner_only(args):
+            out = f"n{self.home}/.omp/run/session-owners/{self.sid}.lock\n" if args[0] == "lsof" else ""
+            return subprocess.CompletedProcess(args, 0, out, "")
+        with m.patch.object(self.sessions, "run", owner_only), m.patch.object(self.sessions.shutil, "which", lambda c: "/usr/bin/" + c), \
+                m.patch.object(self.sessions.os.path, "isdir", lambda p: False if p.startswith("/proc/") else os.path.isdir(p)):
+            self.assertEqual(self.sessions.session_of(987654), (self.sid, log))
+
+    def test_a_lost_log_is_found_by_session_or_by_its_folder_and_task(self):
+        mine = self.omp_log(self.sid, self.at + 1500, "You work on one Herdr task.\n\nYour task, ELIA-5:\nSay hi")
+        other = "01a1b209-0000-7000-8000-000000000000"
+        self.omp_log(other, self.at + 1000, "Your task, ELIA-5:\nSay hi", cwd="/another/folder", folder="-another-folder")
+
+        class S:
+            dirty = False
+            loc = {"folder": "/repo"}
+            def ref(self, t): return "ELIA-5"
+        t = {"id": 5, "state": "done", "worktree": "/work/tree", "agents": [{"address": "t1", "agent": "omp", "at": self.at, "ended": self.at + 60000}]}
+        self.sessions.find_lost_logs(S(), t)
+        self.assertEqual(t["agents"][0]["log"], mine)  # not the other folder's, though it started earlier
+        t = {"id": 5, "state": "done", "agents": [{"address": "t1", "agent": "omp", "session": other, "at": self.at, "ended": self.at + 1}]}
+        self.sessions.find_lost_logs(S(), t)
+        self.assertTrue(t["agents"][0]["log"].endswith(f"_{other}.jsonl"))
+
+    def test_its_log_reads_as_words(self):
+        from herdr_task.agents import from_person, log_tail, said
+        lines = log_tail(self.omp_log(self.sid, self.at, "Fix the login"))
+        self.assertEqual([said(d) for d in lines if said(d) is not None], ["Done."])
+        self.assertEqual([from_person(d) for d in lines if from_person(d) is not None], ["Fix the login"])
+        # a tool's result is no one writing to it
+        self.assertIsNone(from_person({"type": "message", "message": {"role": "toolResult", "content": [{"type": "text", "text": "x"}]}}))
+
+    def test_the_worker_template_names_its_read_only_reviewer(self):
+        from herdr_task import templates
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        for words in (templates.WORKER_MD, worker):
+            self.assertIn("omp --tools read,grep,find,glob,ast_grep`", words)  # no lsp: it can apply edits
+            self.assertIn("herdr.agent=<codex, claude or omp>", words)
+        self.assertIn(templates.WORKER_MD_BEFORE_OMP, templates.OLD_WORKERS)  # an unedited earlier one gets today's
+
+    def test_its_brief_says_when_omp_still_asks(self):
+        from unittest import mock
+        import herdr_task.launch as launch
+
+        class S:
+            loc = {"folder": "/repo"}
+            def ref(self, t): return "OT-1"
+        with mock.patch.object(launch, "review_limits", return_value=(False, 0)), \
+                mock.patch("herdr_task.feedback.feedback_on", return_value=False):
+            asks = launch.closing_line(S(), {"id": 1}, argv=["omp", "--approval-mode", "write"])
+            free = launch.closing_line(S(), {"id": 1}, argv=["omp"])
+            joined = launch.closing_line(S(), {"id": 1}, argv=["omp", "--approval-mode=always-ask"])
+        self.assertIn("approval mode still asks", asks)
+        self.assertIn("approval mode still asks", joined)
+        self.assertNotIn("approval mode still asks", free)
+
+    def test_the_session_note_extension(self):
+        with open(os.path.join(ROOT, "mods", "chat", "omp-session-note.ts")) as f:
+            ext = f.read()
+        self.assertIn('"{app}/mods/chat/session-note.sh"', ext)  # the installer fills in the app's folder
+        self.assertIn("HC_TERMINAL_ID", ext)  # nothing outside Herdr
+        self.assertIn("before_agent_start", ext)
+
+
 if __name__ == "__main__":
     unittest.main()
 

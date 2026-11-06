@@ -1,4 +1,4 @@
-"""Agent sessions: the Claude Code or Codex session a task's agent runs, so it can resume."""
+"""Agent sessions: the Claude Code, Codex or omp session a task's agent runs, so it can resume."""
 
 import json
 import os
@@ -22,7 +22,8 @@ def kids(pid):
 
 def session_of(pid):
     """(session id, log path) of the agent process pid (or a child), as mods/chat/log.js finds it:
-    Claude Code names its session in ~/.claude/sessions/<pid>.json; Codex holds its rollout open."""
+    Claude Code names its session in ~/.claude/sessions/<pid>.json; Codex holds its rollout open, omp
+    its session file (~/.omp/agent/sessions/<folder>/<when>_<id>.jsonl) and its owner lock."""
     for p in [str(pid)] + kids(pid):
         j = os.path.join(HOME, ".claude", "sessions", p + ".json")
         if os.path.isfile(j):
@@ -50,11 +51,24 @@ def session_of(pid):
                     pass
         elif shutil.which("lsof"):
             files = [l[1:] for l in run(["lsof", "-p", p, "-Fn"]).stdout.split("\n") if l.startswith("n")]
+        owner = None
         for f in files:
             m = re.search(r"/rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$", f)
             if m:
                 return m.group(1), f
+            m = re.search(r"/\.omp/agent/sessions/[^/]+/[^/]*_(" + UUID + r")\.jsonl$", f)
+            if m:
+                return m.group(1), f
+            m = re.search(r"/\.omp/run/session-owners/(" + UUID + r")\.lock$", f)
+            if m:
+                owner = m.group(1)
+        if owner:
+            return owner, log_by_session("omp", owner)
     return None, None
+
+
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+OMP_SESSIONS = os.path.join(HOME, ".omp", "agent", "sessions")
 
 
 def refresh_sessions(s, task, live):
@@ -99,8 +113,14 @@ def _words(content):
 
 def _start(path):
     """(when, first message) a log starts with: Claude Code's first user entry, Codex's session_meta
-    and first user message. (None, "") if it has none in its first lines."""
-    at, said = None, ""
+    and first user message, omp's session line and first user message. (None, "") if it has none
+    in its first lines."""
+    return _begins(path)[:2]
+
+
+def _begins(path):
+    """(when, first message, folder) a log starts with (_start's, and omp's session cwd or None)."""
+    at, said, cwd = None, "", None
     try:
         with open(path, errors="replace") as f:
             for i, line in enumerate(f):
@@ -113,6 +133,11 @@ def _start(path):
                 p = o.get("payload") or {}
                 if o.get("type") == "session_meta":
                     at = at or _ms(p.get("timestamp") or o.get("timestamp"))
+                elif o.get("type") == "session" and o.get("cwd"):  # omp
+                    at, cwd = at or _ms(o.get("timestamp")), o["cwd"]
+                elif o.get("type") == "message" and (o.get("message") or {}).get("role") == "user":  # omp
+                    at = at or _ms(o.get("timestamp"))
+                    said = _words(o["message"].get("content"))
                 elif o.get("type") == "user" and not o.get("isMeta"):
                     at = at or _ms(o.get("timestamp"))
                     said = _words((o.get("message") or {}).get("content"))
@@ -124,7 +149,7 @@ def _start(path):
                     break
     except OSError:
         pass
-    return at, said
+    return at, said, cwd
 
 
 def project_dir(folder):
@@ -136,6 +161,8 @@ def log_by_session(kind, sid):
     import glob
     if kind == "codex":
         found = glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", f"rollout-*{sid}.jsonl"))
+    elif kind == "omp":
+        found = glob.glob(os.path.join(OMP_SESSIONS, "*", f"*_{sid}.jsonl"))
     else:
         found = glob.glob(os.path.join(HOME, ".claude", "projects", "*", sid + ".jsonl"))
     return found[0] if found else None
@@ -146,7 +173,7 @@ def find_log(a, ref, folders, taken=()):
     or None: by its session when it has one, else the earliest log of its kind that started from
     its launch on (until it ended) and whose first message names its task."""
     import glob
-    kind = "codex" if a.get("agent") == "codex" else "claude"
+    kind = a.get("agent") if a.get("agent") in ("codex", "omp") else "claude"
     if a.get("session"):
         return log_by_session(kind, a["session"])
     at = a.get("at")
@@ -157,6 +184,9 @@ def find_log(a, ref, folders, taken=()):
         import datetime
         days = {datetime.date.fromtimestamp((at + d) / 1000) for d in (-86400000, 0, 86400000)}
         files = [f for day in days for f in glob.glob(os.path.join(HOME, ".codex", "sessions", f"{day:%Y}", f"{day:%m}", f"{day:%d}", "rollout-*.jsonl"))]
+    elif kind == "omp":
+        # omp names a folder's sessions its own way: every log there, then each one's own folder (its session line).
+        files = glob.glob(os.path.join(OMP_SESSIONS, "*", "*.jsonl"))
     else:
         files = [f for d in dict.fromkeys(x for x in folders if x) for f in glob.glob(os.path.join(project_dir(d), "*.jsonl"))]
     named = re.compile(rf"(?<![\w-]){re.escape(ref)}(?![\w-])")
@@ -169,8 +199,10 @@ def find_log(a, ref, folders, taken=()):
                 continue  # last written before it started
         except OSError:
             continue
-        start, said = _start(f)
+        start, said, cwd = _begins(f)
         if start is None or not (at - LOOK_BACK_MS <= start <= end) or not named.search(said):
+            continue
+        if kind == "omp" and cwd not in folders:
             continue
         if not best or start < best[0]:
             best = (start, f)
