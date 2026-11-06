@@ -56,6 +56,9 @@ describe("a CLI's start screen, read the same by the window and the service", ()
     expect(mayStart({ ...listed, argv: ["sh", "-c", "low", "herdr-low", "omp"] })).toBe(false);
     expect(mayStart({ ...listed, turn: 1 })).toBe(false);
     expect(starting(got({ name: "zsh", argv: ["/bin/zsh", "-i"] }))).toBe(false);
+    // Codex from npm runs as node
+    expect(cliOf({ ...listed, argv: ["sh", "-c", "low", "herdr-low", "codex", "Brief"], foreground: { name: "node", argv: ["node", "/usr/local/bin/codex"] } })).toBe("codex");
+    expect(cliOf({ ...listed, foreground: { name: "sh", argv: ARGV } })).toBe(null); // the service's record, made with the wrapper in front
   });
   const watch = (fg, screen = FOLDER) => {
     const store = new Map(), sent = [];

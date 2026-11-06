@@ -2987,6 +2987,11 @@ class StartScreen(unittest.TestCase):
         self.screen = "Choose the text style\n\n ❯ 1. Dark mode\n   2. Light mode\n\nEnter to confirm"
         self.assertEqual(self.agents.task_status(self.task, [self.worker()]), ("needs", "screen", "Claude Code waits on its start screen"))
 
+    def test_codex_from_npm_runs_as_node(self):
+        self.screen = "Hooks need review\n\n› 1. Review hooks\n  2. Trust all and continue\n\n  Press enter to confirm or esc to go back"
+        codex = self.worker(argv=["sh", "-c", "low", "herdr-low", "codex", "Brief"], foreground={"name": "node", "argv": ["node", "/usr/local/bin/codex"]})
+        self.assertEqual(self.agents.task_status(self.task, [codex]), ("needs", "screen", "Codex waits on its start screen"))
+
     def test_working_while_it_starts_or_once_it_reports(self):
         self.assertEqual(self.agents.task_status(self.task, [self.worker(created_ms=self.clock - 2000)])[0], "working")
         self.assertEqual(self.agents.task_status(self.task, [self.worker(status={"state": "working", "app": "claude-code"})])[0], "working")

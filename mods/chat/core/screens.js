@@ -121,6 +121,9 @@ const RETRY = 10000;      // a pressed choice has this long to leave the screen 
 export const KEEP = 6;    // closed cards kept per agent (their quiet lines)
 export const CLI = { claude: "Claude Code", codex: "Codex" };
 
+const SHELLS = new Set(["bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "xonsh", "pwsh", "powershell", "elvish"]);
+// The CLI a terminal's own command names as a word (`sh -c … herdr-low <its shell> claude …`), or null.
+const named = (k) => (k?.argv ?? []).map((a) => String(a).split("/").pop()).find((a) => a === "claude" || a === "codex") ?? null;
 const kindOf = (a) => { const s = String(a ?? "").split("/").pop(); return /^claude/.test(s) ? "claude" : /^codex/.test(s) ? "codex" : null; };
 
 // Which CLI a terminal runs: { claude | codex } from its report or its program, else null. The program in front is
@@ -131,7 +134,9 @@ export function cliOf(k) {
     const kind = kindOf(a);
     if (kind) return kind;
   }
-  return null;
+  // Something other than a shell in front (Codex from npm is `node`) of a terminal started for one.
+  const fg = String(k?.foreground?.name ?? "").split("/").pop().replace(/^-/, "");
+  return fg && !SHELLS.has(fg) ? named(k) : null;
 }
 
 const stateOf = (k) => (typeof k?.status === "string" ? k.status : k?.status?.state ?? null);
@@ -145,7 +150,7 @@ export function starting(k) {
 // that wrapper (the service's record keeps the foreground it was made with: `sh`): one that hasn't reported yet may be
 // its CLI on a start screen, or the shell it left (cliOf() says neither, so lost sessions are still looked for). The
 // watch asks hc get what runs in front now.
-const wrapped = (k) => { const argv = k?.argv ?? [], at = argv.indexOf("herdr-low"); return at >= 0 && argv.slice(at + 1).some((a) => /^(claude|codex)$/.test(String(a).split("/").pop())); };
+const wrapped = (k) => (k?.argv ?? []).includes("herdr-low") && Boolean(named(k));
 export const mayStart = (k) => starting(k) || (Boolean(k) && k.state === "live" && !stateOf(k) && !(k.turn > 0) && wrapped(k));
 
 // The words a start screen's card says: its title, how a press went, how it closed.

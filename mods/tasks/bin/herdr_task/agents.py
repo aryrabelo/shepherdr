@@ -491,10 +491,14 @@ _TRUST = re.compile(r"\btrust\b.{0,40}\b(folder|directory)\b", re.I | re.S)
 
 def cli_name(k):
     """ "Claude Code" or "Codex" from its report or the program in front (hc get's foreground: Claude
-    Code's own build is named for its version, its command says claude), else None."""
+    Code's own build is named for its version, its command says claude; Codex from npm is node), else None."""
     st = k.get("status") if isinstance(k.get("status"), dict) else {}
     fg = k.get("foreground") or {}
-    for a in (st.get("app"), k.get("agent"), fg.get("name"), (fg.get("argv") or [None])[0]):
+    words = [st.get("app"), k.get("agent"), fg.get("name"), (fg.get("argv") or [None])[0]]
+    # Something other than a shell in front (Codex from npm is `node`) of a terminal started for one: its command's words.
+    if fg.get("name") and os.path.basename(fg["name"]).lstrip("-") not in SHELLS:
+        words += [a for a in k.get("argv") or [] if os.path.basename(str(a)) in ("claude", "codex")]
+    for a in words:
         a = os.path.basename(str(a or ""))
         if a.startswith("claude"):
             return "Claude Code"
