@@ -169,7 +169,8 @@ def notice(changed):
     for i, r in enumerate(changed):
         words = (reactions.TURNED_ON if r["value"] == "on" else reactions.TURNED_OFF) if r["key"] == "reactions" else \
             f"{r['label']} is now {r['text']}" + (f"; {BY[r['by']]}" if r["by"] else "; Herdr's default") + \
-            ("." if r["key"] in ("autopilot", "feedback") else ". Tasks you add from now on get it; running ones keep their brief.")
+            ("." if r["key"] in ("autopilot", "feedback") else
+             f". Tasks you {'add' if r['key'] == 'base' else 'start'} from now on get it; running ones keep their brief.")
         end = f" {NOTICE_END}" if i == len(changed) - 1 else ""
         out.append(f'<herdr-setting name="{r["key"]}" value="{attr(r["value"])}" scope="{r["scope"]}">{words}{end}</herdr-setting>')
     return "\n".join(out)

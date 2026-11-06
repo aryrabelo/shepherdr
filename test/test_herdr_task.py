@@ -1590,6 +1590,113 @@ class ReviewAsAHelperAgent(unittest.TestCase):
             self.assertEqual(templates.instructions("reviewer"), "My own words.")
 
 
+class SettingsKeptFromStart(unittest.TestCase):
+    """ASH-7: a running task follows the settings it started with (its brief's Settings block), not
+    ones changed in Settings since: ready's review gate and its merge read the same as its brief.
+    A real settings file; only starting an agent and telling it are faked."""
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.commands as commands
+        import herdr_task.settings as settings
+        self.commands, self.settings, self.mock = commands, settings, mock
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        self.file = os.path.join(d, "shepherdr.json")
+        self.briefs, self.told = [], []
+        for mod, name, value in ((settings, "SETTINGS", self.file),
+                                 (commands, "launch", lambda s, t, argv, space, msg, parent=None: self.briefs.append(msg) or {}),
+                                 (commands, "brief", lambda s, t, parent, space, argv: settings.settings_block(s, t, space, argv)),
+                                 (commands, "folder_for", lambda s, t: None), (commands, "parent_for", lambda p, sp: None),
+                                 (commands, "github", lambda s: None),
+                                 (commands, "tell", lambda s, t, msg, args: self.told.append(msg) or ("t1", False))):
+            p = mock.patch.object(mod, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def set_everywhere(self, **tasks):
+        with open(self.file, "w") as f:
+            json.dump({"version": 1, "everywhere": {"tasks": tasks}}, f)
+
+    def started(self, **kw):
+        """A worktree task with a commit of its own, started now."""
+        t = {"id": 1, "title": "T", "state": "todo", "mode": "worktree", "worktree": "/nowhere/wt", "branch": "task/1",
+             "agents": [{"argv": ["claude"], "agent": "claude"}], "start": "a" * 40, "head": "b" * 40, **kw}
+        s = Store([t])
+        self.commands.begin(s, t, ["claude"], "sp1")
+        return s, t
+
+    def block(self, s, t):
+        return self.settings.settings_block(s, t)
+
+    def test_review_and_merge_turned_on_after_it_started(self):
+        self.set_everywhere(review_rounds=0, merge="ask")
+        s, t = self.started()
+        self.assertIn("- Review: off", self.briefs[0])
+        self.set_everywhere(review_rounds=3, merge="auto")
+        # What it shows and what ready does agree with its brief.
+        self.assertIn("- Review: off", self.block(s, t))
+        self.assertNotIn("Reviewer:", self.block(s, t))
+        self.assertEqual(self.block(s, t), self.briefs[0])
+        self.assertIn("- Merge: ask the person first", self.block(s, t))
+        self.assertEqual(self.settings.review_limits(s, t), (False, 0))
+        self.assertIsNone(self.commands.review_refusal(s, t, t["worktree"]))
+        self.assertEqual(self.settings.merge_policy(s, t), "ask")
+        msg = self.commands.finalize(s, t)
+        self.assertIn("The person accepts it", msg)
+        self.assertEqual(self.told, [])
+        self.assertNotIn("auto_merge", t)
+        # A task that starts now gets the new ones.
+        t2 = {"id": 2, "title": "U", "state": "todo", "mode": "worktree"}
+        self.assertEqual(self.settings.review_limits(Store([t2]), t2), (True, 3))
+        self.assertEqual(self.settings.merge_policy(Store([t2]), t2), "auto")
+
+    def test_review_turned_off_after_it_started(self):
+        self.set_everywhere(review_rounds=2, merge="auto")
+        s, t = self.started()
+        self.assertIn("- Reviewer:", self.briefs[0])
+        self.set_everywhere(review_rounds=0, merge="ask")
+        self.assertEqual(self.block(s, t), self.briefs[0])
+        self.assertIn("- Reviewer:", self.block(s, t))
+        self.assertEqual(self.settings.review_limits(s, t), (True, 2))
+        self.assertIn("Review is on", self.commands.review_refusal(s, t, t["worktree"]))
+        self.assertEqual(self.settings.merge_policy(s, t), "auto")
+        self.commands.finalize(s, t)
+        self.assertEqual(t.get("auto_merge"), "auto")
+        self.assertEqual(len(self.told), 1)  # asked to merge, as its brief says
+
+    def test_its_own_set_still_wins(self):
+        self.set_everywhere(review_rounds=0, merge="ask")
+        s, t = self.started()
+        self.set_everywhere(review_rounds=0, merge="checks")
+        self.settings.set_task(t, "merge", "on its own")
+        self.settings.set_task(t, "review", "on")
+        self.assertEqual(self.settings.merge_policy(s, t), "auto")
+        self.assertEqual(self.settings.review_limits(s, t), (True, 3))
+        self.assertIn("- Reviewer:", self.block(s, t))
+        self.settings.set_task(t, "merge", "default")
+        self.assertEqual(self.settings.merge_policy(s, t), "ask")  # back to what it started with
+
+    def test_one_started_before_herdr_kept_them_reads_settings(self):
+        self.set_everywhere(review_rounds=0, merge="ask")
+        t = {"id": 1, "title": "T", "state": "running", "mode": "worktree"}
+        s = Store([t])
+        self.set_everywhere(review_rounds=1, merge="auto")
+        self.assertEqual(self.settings.review_limits(s, t), (True, 1))
+        self.assertEqual(self.settings.merge_policy(s, t), "auto")
+
+    def test_reopened_and_queued_again_reads_settings_until_it_starts(self):
+        self.set_everywhere(merge="ask")
+        s, t = self.started()
+        t["state"] = "queued"
+        self.set_everywhere(merge="auto")
+        self.assertEqual(self.settings.merge_policy(s, t), "auto")
+        self.commands.begin(s, t, ["claude"], "sp1")
+        self.set_everywhere(merge="ask")
+        self.assertEqual(self.settings.merge_policy(s, t), "auto")
+
+
 class Store:
     """Enough of herdr_task.store.Store for the commands, in memory."""
     def __init__(self, tasks):
@@ -2703,7 +2810,7 @@ class AssistantSettings(unittest.TestCase):
         lines = self.sent[0][1].split("\n")
         self.assertEqual(len(lines), 2)
         self.assertRegex(lines[0], r'^<herdr-setting name="review" value="on" scope="everywhere">Review is now on, at most 3 rounds[^<]*'
-                                   r'; your setting everywhere\. Tasks you add from now on get it; running ones keep their brief\.</herdr-setting>$')
+                                   r'; your setting everywhere\. Tasks you start from now on get it; running ones keep their brief\.</herdr-setting>$')
         self.assertRegex(lines[1], r'^<herdr-setting name="reactions" value="off" scope="space">Reactions are now off[\s\S]*<hc no-reply/>\.</herdr-setting>$')
         self.assertEqual(report["settings"], [{"to": "t5", "changed": ["review", "reactions"]}])
         self.assertEqual(self.terminals["t5"]["labels"]["herdr.reactions"], "off")

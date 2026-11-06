@@ -13,7 +13,7 @@ import time
 from .base import Fail, git, guard, now, run, STORE, VERSION
 from .settings import (
     agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, settings_block, settings_for, space_base,
-    task_settings, worker_argv, worktrees_on,
+    start_settings, task_layers, task_settings, worker_argv, worktrees_on,
 )
 from .agents import (
     agent_running, busy_again, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX, WORKING_AGAIN,
@@ -258,6 +258,9 @@ def cmd_show(args):
 def begin(s, t, argv, space, parent=None):
     """Starts the task's first agent. Returns its record."""
     t["state"], t["started"] = "running", now()
+    # The settings that shape its work, as they are now: its brief's Settings block, and what
+    # ready, review and merge follow, even when Settings change while it runs.
+    start_settings(s, t, space)
     # Its brief teaches `reviewed`: ready waits for a review of its final commit (review_refusal).
     t["review_gate"] = True
     for k in ("queue", "queued_at", "attention", "held", "scheduled_for"):
@@ -667,7 +670,7 @@ def cmd_review(args):
     with open_store(args) as s:
         t = s.find(args.id)
         rv = t.pop("review", None) or {}
-        cfg = settings_for(s, t.get("space"))["tasks"]
+        cfg = settings_for(s, t.get("space"), task_layers(s, t))["tasks"]
         of = rv.get("of") or int(cfg.get("review_rounds") or 1)
         n = rv.get("round") or len(t.get("reviews") or []) + 1
         rec = {"round": n, "result": "pass" if args.passed else "changes", "text": (text or args.notes or "").strip(),
@@ -854,6 +857,8 @@ def cmd_switch(args):
         space = (labels.get("herdr.task.space") or labels.get("herdr.space") or (bare(args.space) if args.space else None)
                  or t.get("space") or default_space())
         if t["state"] in ("todo", "scheduled", "queued", "done"):
+            if t["state"] != "done":
+                start_settings(s, t, space)  # starting now: as begin() keeps them
             t["state"] = "running"
             t.setdefault("started", now())
             t.pop("queue", None)
