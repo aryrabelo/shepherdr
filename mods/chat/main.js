@@ -57,7 +57,7 @@ const DICT_SLOW = 5000;
 import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, FILES as THREAD_FILES, CHANGES as THREAD_CHANGES, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
-import { ScreenWatch, screenStrips, openCard, cardsOf, starting, cliOf } from "./screens.js";
+import { ScreenWatch, screenStrips, openCard, cardsOf, starting, mayStart, cliOf } from "./screens.js";
 import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
@@ -431,7 +431,7 @@ export default class Chat extends View {
     cx.timer.every(2500, (cx) => {
       if (!this.assistant() || this.workersLooking) return;
       const by = this.workerTasks();
-      const look = terminals().filter((k) => by.has(k.address) && (starting(k) || openCard(k.address) || this.lostCandidate(k)));
+      const look = terminals().filter((k) => by.has(k.address) && (mayStart(k) || openCard(k.address) || this.lostCandidate(k)));
       if (!look.length) return;
       this.workersLooking = true;
       cx.spawn(async (cx) => {

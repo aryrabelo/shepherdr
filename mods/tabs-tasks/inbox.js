@@ -234,9 +234,10 @@ async function readTasksNow() {
       // counts (not Merging, nor one whose agent asks: that agent is a "blocked" item).
       // "asks": its agent waits (a live blocked terminal, an item of its own): kept for its reason.
       // "provider": cut off by its model's provider, the tries used up (herdr-task tick).
+      // "screen": its CLI waits on a start screen of its own (trust this folder), its card in the chat.
       // A problem its agent is on (herdr-task's on_it(): Working, not Needs you) is no item.
       const kind = x.attention ? (x.needs === "attention" ? "check" : null) : x.state === "ready" ? (x.status === "ready" ? "merge" : null)
-        : x.needs === "stopped" || x.status === "stopped" ? "stopped" : x.needs === "reply" || x.needs === "provider" ? "waiting"
+        : x.needs === "stopped" || x.status === "stopped" ? "stopped" : x.needs === "reply" || x.needs === "provider" || x.needs === "screen" ? "waiting"
         : x.needs === "asks" ? "asks" : null;
       if (!kind) continue;
       const last = x.agents?.[x.agents.length - 1];

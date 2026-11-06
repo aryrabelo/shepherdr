@@ -10,9 +10,9 @@
 import { hc, shared, setShared } from "herdr";
 import { terminals } from "./live.js";
 import { headStrip, linkCtl } from "./cards.js";
-import { ScreenWatch as Watch, SCREEN, KEEP, starting, cliOf } from "./core/screens.js";
+import { ScreenWatch as Watch, SCREEN, KEEP, starting, mayStart, cliOf } from "./core/screens.js";
 
-export { starting, cliOf };
+export { starting, mayStart, cliOf };
 
 export const cardsOf = (addr) => (shared("chat.screens") ?? {})[addr] ?? [];
 export const openCard = (addr) => { const c = cardsOf(addr).at(-1); return c?.state === "open" ? c : null; };

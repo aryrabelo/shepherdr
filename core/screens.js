@@ -121,18 +121,32 @@ const RETRY = 10000;      // a pressed choice has this long to leave the screen 
 export const KEEP = 6;    // closed cards kept per agent (their quiet lines)
 export const CLI = { claude: "Claude Code", codex: "Codex" };
 
-// Which CLI a terminal runs: { claude | codex } from its report or its program, else null.
+const kindOf = (a) => { const s = String(a ?? "").split("/").pop(); return /^claude/.test(s) ? "claude" : /^codex/.test(s) ? "codex" : null; };
+
+// Which CLI a terminal runs: { claude | codex } from its report or its program, else null. The program in front is
+// hc get's foreground: its name, or its command when the name is something else (Claude Code's own build is named
+// for its version, "2.1.319"); the window's list says it as `program`.
 export function cliOf(k) {
-  const a = String(k?.status?.app ?? k?.agent ?? k?.foreground?.name ?? "");
-  return /^claude/.test(a) ? "claude" : /^codex/.test(a) ? "codex" : null;
+  for (const a of [k?.status?.app, k?.agent, k?.foreground?.name, k?.foreground?.argv?.[0], k?.program?.shell ? null : k?.program?.key]) {
+    const kind = kindOf(a);
+    if (kind) return kind;
+  }
+  return null;
 }
 
+const stateOf = (k) => (typeof k?.status === "string" ? k.status : k?.status?.state ?? null);
 // Still before its session: live, no status reported, no turn taken. (hc ls's `status` is the report's state word,
 // or null.)
 export function starting(k) {
-  const st = typeof k?.status === "string" ? k.status : k?.status?.state ?? null;
-  return Boolean(k) && k.state === "live" && !st && !(k.turn > 0) && Boolean(cliOf(k));
+  return Boolean(k) && k.state === "live" && !stateOf(k) && !(k.turn > 0) && Boolean(cliOf(k));
 }
+
+// A task's worker starts low (herdr-task's LOW: `sh -c … herdr-low <its shell> claude …`), so the live lists name only
+// that wrapper (the service's record keeps the foreground it was made with: `sh`): one that hasn't reported yet may be
+// its CLI on a start screen, or the shell it left (cliOf() says neither, so lost sessions are still looked for). The
+// watch asks hc get what runs in front now.
+const wrapped = (k) => { const argv = k?.argv ?? [], at = argv.indexOf("herdr-low"); return at >= 0 && argv.slice(at + 1).some((a) => /^(claude|codex)$/.test(String(a).split("/").pop())); };
+export const mayStart = (k) => starting(k) || (Boolean(k) && k.state === "live" && !stateOf(k) && !(k.turn > 0) && wrapped(k));
 
 // The words a start screen's card says: its title, how a press went, how it closed.
 export const SCREEN = {
@@ -157,6 +171,7 @@ export class ScreenWatch {
     this.last = new Map();
     this.looking = new Set();
     this.pressing = new Set();
+    this.shell = new Map();
   }
 
   open(addr) { const c = this.io.cards(addr).at(-1); return c?.state === "open" ? c : null; }
@@ -167,17 +182,24 @@ export class ScreenWatch {
   // k: the terminal as hc get has it (created_ms, cols) or the live list's entry.
   async tick(addr, k, now = Date.now()) {
     const was = this.open(addr);
-    if (!starting(k)) {
+    if (!mayStart(k)) {
       this.last.delete(addr);
       // Its session started (it reports, or took a turn), or it ended: the card's wait is over.
       if (was) this.close(was, k?.state === "live" ? SCREEN.inTerminal : SCREEN.stopped);
       return;
     }
-    if (this.looking.has(addr) || this.pressing.has(addr)) return;
+    if (this.looking.has(addr) || this.pressing.has(addr) || now - (this.shell.get(addr) ?? -Infinity) < RETRY) return;
     this.looking.add(addr);
     try {
-      // The live list doesn't say when it started or how wide it is: hc get does.
-      if (k.created_ms === undefined) { try { k = { ...JSON.parse((await this.io.hc(["get", addr, "--json"])).stdout || "{}"), ...k }; } catch {} }
+      // The live list doesn't say when it started, how wide it is or what runs in front: hc get does.
+      if (k.created_ms === undefined || !starting(k)) {
+        try { const got = JSON.parse((await this.io.hc(["get", addr, "--json"])).stdout || "{}"); k = { ...got, ...k, foreground: got.foreground ?? null }; } catch {}
+      }
+      if (!starting(k)) {
+        // A started-low worker's shell in front (its CLI ended): looked at again a little later.
+        if (k.foreground) { this.shell.set(addr, now); this.last.delete(addr); if (was) this.close(was, SCREEN.inTerminal); }
+        return;
+      }
       if (k.created_ms && now - k.created_ms < FIRST_LOOK) return;
       const r = await this.io.hc(["read", addr]);
       if (r.code !== 0) return;

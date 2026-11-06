@@ -123,6 +123,9 @@ export function place(list, task, { live = [], helpers = [], loaded = true, now 
   // Why it waits: herdr-task's words (its agent's own status line, its question or last words),
   // kept on the task by its scheduler (task.waits), else the standard reason.
   else if (states.includes("blocked")) need("asks", task.waits ?? REASONS.question);
+  // On its CLI's own start screen (trust this folder), which no hook reports: herdr-task's start_screen(), kept on the
+  // task by its scheduler (task.screen) while an agent of it hasn't reported.
+  else if (task.screen && st === "running" && live.some((a) => !a.status)) need("screen", task.screen);
   // Back at work after it said ready: no Accept until it says ready again.
   else if (busyAgain(task, live, now)) { section = "working"; why = WORKING_AGAIN; }
   else if (fixing) { section = "working"; why = st === "ready" ? WORKING_AGAIN : null; }
