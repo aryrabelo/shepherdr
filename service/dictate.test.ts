@@ -1,7 +1,7 @@
 // Dictation writes a recording down with ElevenLabs speech to text (Scribe), with the key a voice call uses (voiceKey:
 // from the machine that keeps the secrets). The ElevenLabs call is a stand-in here: what it is sent, and each failure's words.
 import { describe, expect, test } from "bun:test";
-import { dictate, fileName, keyCache, liveToken } from "./dictate.ts";
+import { dictate, fileName, keyCache, liveToken, cachedKey } from "./dictate.ts";
 import * as V from "../core/voice.js";
 
 const { voiceKey, KEY_SCRIPT, STT_MODEL } = V as any;
@@ -157,4 +157,12 @@ describe("dictation with OpenAI (Settings › Voice from)", () => {
     await expect(dictate(hub, new Blob([]), elevenlabs(200, {}).f, async () => { asked++; return { provider: "openai" as const, key: OKEY }; })).rejects.toThrow("Nothing was recorded.");
     expect(asked).toBe(0);
   });
+});
+
+test("a change of Voice from finds the voice again at once (the kept one was for the old choice)", () => {
+  const a = cachedKey(hub, "elevenlabs");
+  expect(cachedKey(hub, "elevenlabs")).toBe(a);
+  const b = cachedKey(hub, "openai");
+  expect(b).not.toBe(a);
+  expect(cachedKey(hub, "openai")).toBe(b);
 });

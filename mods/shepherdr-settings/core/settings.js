@@ -326,7 +326,7 @@ export const ADDONS = "Add-ons";
 // core/voice-openai.js pickVoice reads it).
 export const VOICE_FROM = {
   title: "Voice from",
-  about: "Automatic: OpenAI when an OpenAI key (OPENAI_API_KEY) is in Secrets, else ElevenLabs. Calls and dictation use it.",
+  about: "Automatic: OpenAI when an OpenAI key (OPENAI_API_KEY) is in Secrets, else ElevenLabs. Calls and dictation use it; words appear while you speak only with ElevenLabs.",
   choices: [["auto", "Automatic"], ["openai", "OpenAI"], ["elevenlabs", "ElevenLabs"]],
 };
 // An add-on's line: its about, and what stops a flip (stop: the titles in the way).

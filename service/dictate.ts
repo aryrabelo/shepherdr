@@ -9,7 +9,7 @@
 import type { Hub } from "./hub.ts";
 import * as V from "../core/voice.js";
 import * as O from "../core/voice-openai.js";
-import { voiceFor } from "./voice.ts";
+import { voiceFor, voiceSetting } from "./voice.ts";
 
 const { transcribe, liveTokenRequest, sttError, dictateKeyError, MAX_AUDIO } = V as any;
 const { openaiTranscribe } = O as any;
@@ -39,8 +39,12 @@ export function keyCache(find: () => Promise<Key>, keep = KEY_KEEP, now = () => 
   return { get, forget: () => { kept = null; } };
 }
 
-let cache: ReturnType<typeof keyCache> | null = null;
-const cachedKey = (hub: Pick<Hub, "call">) => (cache ??= keyCache(() => voiceFor(hub)));
+let cache: ReturnType<typeof keyCache> | null = null, cacheFor = "";
+/** the voice kept for the Voice from it was found for: a change there finds it again at once */
+export const cachedKey = (hub: Pick<Hub, "call">, setting = voiceSetting()) => {
+  if (!cache || cacheFor !== setting) { cacheFor = setting; cache = keyCache(() => voiceFor(hub, () => setting)); }
+  return cache;
+};
 /** a refused key: found again next time */
 const refused = (e: unknown) => { if (/\b401\b|invalid.*key|incorrect api key|unauthori/i.test(String((e as Error)?.message ?? e))) cache?.forget(); };
 

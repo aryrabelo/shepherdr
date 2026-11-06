@@ -310,9 +310,11 @@ async function runTool(name: string, params: any) {
 /** The call through OpenAI's Realtime voice: the key only in the socket's header, 24 kHz both ways. */
 async function openai(key: string) {
   inRate = outRate = OPENAI_RATE;
-  ws = new WebSocket(realtimeUrl(), { headers: { authorization: `Bearer ${key}` } } as any);
+  // where the call is, asked before the socket: its handlers go on at once (Bun doesn't keep an open for a later one)
   const here = (await serviceTool("look", { what: "here" }))?.result ?? "";
   saidWhere = JSON.stringify(where());
+  if (ended) return;
+  ws = new WebSocket(realtimeUrl(), { headers: { authorization: `Bearer ${key}` } } as any);
   rt = realtimeCall({
     send: (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); },
     audio: (b64: string) => { const pcm = Buffer.from(b64, "base64"); if (pcm.length % 2 === 0) play(new Uint8Array(pcm)); },

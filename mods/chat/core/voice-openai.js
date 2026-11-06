@@ -95,7 +95,7 @@ export function noteItem(line) {
 /** OpenAI's error codes a call goes on through (a race between its turns and ours). */
 const HARMLESS = new Set(["conversation_already_has_active_response", "response_cancel_not_active", "item_truncate_invalid_item_id"]);
 /** An error that ends the call (a bad key, no credit, a model it can't use). */
-const FATAL = /api_key|quota|billing|insufficient|model_not_found|unsupported_model|session_expired|authentication|permission/i;
+const FATAL = /api_key|quota|billing|insufficient|model_not_found|unsupported_model|authentication|permission/i;
 
 /** An error from OpenAI in words, without anything that looks like a key. */
 export const openaiError = (status, body) => {
@@ -131,10 +131,10 @@ export function realtimeCall(io) {
     io.send(extra && extra !== true ? { type: "response.create", response: extra } : { type: "response.create" });
   };
   const calls = async (items) => {
-    let more = false, skip = false;
+    let more = false;
     for (const c of items) {
       if (c.name === "end_call") { ending = true; io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: "The call is ending." } }); continue; }
-      if (c.name === "skip_turn") { skip = true; io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: "ok" } }); continue; }
+      if (c.name === "skip_turn") { io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: "ok" } }); continue; }
       answering.add(c.call_id);
       let params = {};
       try { params = c.arguments ? JSON.parse(c.arguments) : {}; } catch {}
@@ -151,7 +151,8 @@ export function realtimeCall(io) {
       if (spoke) return finish(null);
       return respond({ instructions: "Say only a one-word goodbye in the person's language, like \"Bye.\", and nothing else." });
     }
-    if (more && !skip) respond(true);
+    // skip_turn keeps it quiet only when it was all that was asked: a tool's answer is still said
+    if (more) respond(true);
     else if (want) respond(want);
   };
   return {
@@ -184,6 +185,8 @@ export function realtimeCall(io) {
       if (t === "error") {
         const e = m.error ?? {};
         if (HARMLESS.has(e.code)) return;
+        // OpenAI's own longest session ran out: the call ends as a long one does, without an error
+        if (e.code === "session_expired") return finish(null);
         if (FATAL.test(`${e.code ?? ""} ${e.type ?? ""}`)) return finish(openaiError(0, e));
       }
     },

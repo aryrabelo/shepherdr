@@ -46,7 +46,7 @@ export function keyFor(hub: Pick<Hub, "call">, name: string = KEY_NAME) {
 export type Voice = { provider: "openai" | "elevenlabs"; key: string; agent?: string } | { error: string; why: string; dictate?: string };
 /** Settings › Voice from (Everywhere's voice.provider) and its key: OpenAI's, ElevenLabs', or Automatic's pick. */
 // read when a call or dictation starts (the window's settings write it; another machine's is pushed from there)
-const voiceSetting = (): string => {
+export const voiceSetting = (): string => {
   try { return providerSetting(JSON.parse(readFileSync(process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json"), "utf8"))); } catch { return "auto"; }
 };
 export function voiceFor(hub: Pick<Hub, "call">, setting = voiceSetting) {

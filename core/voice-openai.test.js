@@ -204,6 +204,17 @@ describe("a call", () => {
     await flush();
     expect(c.types()).toEqual(["conversation.item.create"]);
   });
+  test("skip_turn beside a real tool: the tool's answer is still said", async () => {
+    const c = call({ look: () => ({ result: "ok" }) });
+    c.rt.hear({ type: "response.done", response: { output: [fnCall("skip_turn", {}), fnCall("look", { what: "here" })] } });
+    await flush();
+    expect(c.types()).toEqual(["conversation.item.create", "conversation.item.create", "response.create"]);
+  });
+  test("OpenAI's own session running out ends the call cleanly, as a long one does", () => {
+    const c = call();
+    c.rt.hear({ type: "error", error: { type: "invalid_request_error", code: "session_expired", message: "Your session hit the maximum duration." } });
+    expect(c.ends).toEqual([null]);
+  });
   test("silence: the voice never prompts; 15 quiet minutes end the call, an hour ends any", () => {
     const c = call();
     c.at(SILENT_END_SECS * 1000 - 1); c.rt.tick();
