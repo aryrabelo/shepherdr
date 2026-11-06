@@ -513,7 +513,9 @@ def install_service(r, rec, home):
                 break
             time.sleep(0.5)
     port = rec.get("port") or DEFAULT_PORT
-    held = https_held(rec.get("https") or DEFAULT_HTTPS)
+    # a TCP forward on the HTTPS port, when this machine is to share the web app (no other host, web on)
+    w = json_file(os.path.join(r.root, HERDR, "shepherdr", "web.json")) or {}
+    held = None if (w.get("serve") or {}).get("host") or w.get("on") is False else https_held(rec.get("https") or DEFAULT_HTTPS)
     if held:
         r.notes.append(f"the web app can't be shared on the tailnet: {held}")
     r.notes.append("the Shepherdr service is running" if ok else
@@ -1032,7 +1034,8 @@ def serve_check(root):
     sv = w.get("serve") or {}
     host = sv.get("host")
     # this machine serves it but couldn't share it (Funnel, a TCP forward on the HTTPS port, tailscale's own error):
-    # say that plainly, not "served from this machine" (GitHub #754); a TCP forward is checked now, as Funnel is
+    # say that plainly, not "served from this machine" (GitHub #754). The service's words come in web.json's why;
+    # a TCP forward is also checked here, now, as the service checks it before sharing
     why = w.get("why")
     if not host and w.get("on", True):
         why = https_held(our_https(root)) or why

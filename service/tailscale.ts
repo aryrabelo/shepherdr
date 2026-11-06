@@ -83,10 +83,13 @@ export async function share(dns: string, port: number, https = HTTPS): Promise<s
   if (now.funnel) return "Funnel is on for this machine's HTTPS port: Shepherdr won't serve there";
   if (now.proxy === ours && now.port === String(https)) return null;
   if (now.proxy && now.proxy !== ours) return `${MOUNT} is already shared to ${now.proxy}`;
+  // the port it is to be served on: never under Funnel, never over a raw TCP forward
+  if (s?.AllowFunnel?.[`${dns}:${https}`]) return `Funnel is on for port ${https}: Shepherdr won't serve there`;
   const to = tcpForward(s, https);
   if (to) return heldWords(https, to);
-  if (now.proxy === ours) await run(["serve", `--https=${now.port}`, "--set-path", MOUNT, "off"]);
   const r = await run(["serve", "--bg", `--https=${https}`, "--set-path", MOUNT, String(port)]);
+  // ours on another port: stopped there only once the new port serves it
+  if (r.ok && now.proxy === ours) await run(["serve", `--https=${now.port}`, "--set-path", MOUNT, "off"]);
   if (r.ok) return null;
   // tailscale's own words, on one line (the window's Settings › Web and doctor show them)
   const said = (r.err.trim() || r.out.trim()).replace(/\s+/g, " ").slice(0, 300);

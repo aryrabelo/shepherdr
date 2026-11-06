@@ -54,7 +54,7 @@ test("tailscale's own error is passed through", async () => {
 test("ours on 443 moves to the chosen port; ours there already is left alone", async () => {
   status({ TCP: { "443": { HTTPS: true } }, Web: { [`${DNS}:443`]: { Handlers: { "/shepherdr": { Proxy: "http://127.0.0.1:7788" } } } } });
   expect(await share(DNS, 7788, 8443)).toBeNull();
-  expect(calls()).toEqual(["serve status --json", "serve --https=443 --set-path /shepherdr off", "serve --bg --https=8443 --set-path /shepherdr 7788"]);
+  expect(calls()).toEqual(["serve status --json", "serve --bg --https=8443 --set-path /shepherdr 7788", "serve --https=443 --set-path /shepherdr off"]);
   rmSync(join(dir, "calls"));
   expect(await share(DNS, 7788, 443)).toBeNull();
   expect(calls()).toEqual(["serve status --json"]);
@@ -63,6 +63,19 @@ test("ours on 443 moves to the chosen port; ours there already is left alone", a
 test("Funnel still wins over everything", async () => {
   status({ ...FORWARD, Web: { [`${DNS}:443`]: { Handlers: { "/shepherdr": { Proxy: "http://127.0.0.1:7788" } } } }, AllowFunnel: { [`${DNS}:443`]: true } });
   expect(await share(DNS, 7788, 443)).toContain("Funnel");
+});
+
+test("Funnel on the chosen port is refused before anything is served there", async () => {
+  status({ AllowFunnel: { [`${DNS}:8443`]: true } });
+  expect(await share(DNS, 7788, 8443)).toContain("Funnel is on for port 8443");
+  expect(calls()).toEqual(["serve status --json"]);
+});
+
+test("ours stays where it was when the new port fails", async () => {
+  status({ Web: { [`${DNS}:443`]: { Handlers: { "/shepherdr": { Proxy: "http://127.0.0.1:7788" } } } } });
+  writeFileSync(join(dir, "fail"), "error: nope\n");
+  expect(await share(DNS, 7788, 8443)).toContain("error: nope");
+  expect(calls()).not.toContain("serve --https=443 --set-path /shepherdr off");
 });
 
 test("the link carries the port only when it isn't 443", () => {
