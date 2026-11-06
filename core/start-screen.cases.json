@@ -1,0 +1,5 @@
+{
+  "about": "Claude Code 2.1's folder-trust dialog, read with hc read on a worker started low on macOS (issue 755): core/screens.test.js and test/test_herdr_task.py read it the same.",
+  "trust": "herdr-low: line 1: /proc/self/oom_score_adj: No such file or directory\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Accessing workspace:\n\n ~/dev/new-repo\n\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this\n folder first.\n\n Claude Code'll be able to read, edit, and execute files here.\n\n Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel",
+  "words": "Claude Code asks to trust this folder"
+}

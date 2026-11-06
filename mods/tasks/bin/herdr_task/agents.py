@@ -5,7 +5,7 @@ import json
 import os
 import re
 
-from .base import hc_json, HOME, now, RANK, SHELLS
+from .base import hc_json, run, HOME, now, RANK, SHELLS
 
 
 # ---- live agents ----------------------------------------------------------------------------
@@ -86,7 +86,7 @@ STATUSES = {"todo": "To do", "scheduled": "Scheduled", "queued": "Queued", "work
 
 def task_status(task, live):
     """(status, needs, why): a STATUSES key; for Needs you what kind ("attention", "asks",
-    "reply", "stopped") and a one-line reason. live = its running agents (hc records)."""
+    "reply", "screen", "stopped") and a one-line reason. live = its running agents (hc records)."""
     st = task["state"]
     if st == "scheduled":
         from .when import starts_words
@@ -118,6 +118,12 @@ def task_status(task, live):
         if task.get("auto_merge") and task.get("pr") and not task.get("merged"):
             return "merging", None, "Merges once its checks pass"
         return "ready", None, None
+    # Stopped on its CLI's own start screen (trust this folder), which no hook reports: Needs you.
+    screen = next(filter(None, map(start_screen, live)), None)
+    if not screen and st == "running" and task.get("screen") and any(not k.get("created_ms") and not status_word(k) for k in live):
+        screen = task["screen"]  # hc ls's records can't tell: the scheduler's last look (news_pass())
+    if screen:
+        return "needs", "screen", screen
     # An agent that hasn't reported yet is starting: working.
     if any(x not in ("idle", "done", "blocked") for x in states):
         return "working", None, None
@@ -469,6 +475,58 @@ def held_ask(address):
         except (OSError, ValueError):
             continue
     return None
+
+
+# ---- a CLI's own start screen ----------------------------------------------------------------
+# Before its session starts a CLI may stop on a screen of its own (Claude Code's "Quick safety check: ...
+# do you trust this folder?", a theme, a sign-in), and no hook reports it: its agent shows no status, so
+# it would read Working until it stalls (issue 755). Read as core/screens.js reads it for the chat's card
+# (the person answers it there with one press; nothing here presses anything): Claude Code or Codex in
+# front, no status, no turn, a few seconds old, a menu on its screen (the CLI's cursor mark and a choice
+# beside it).
+SCREEN_AFTER_MS = 6000
+_MARK = re.compile(r"^(\s*[❯›▶►➤→>]\s+)\S")
+_TRUST = re.compile(r"\btrust\b.{0,40}\b(folder|directory)\b", re.I | re.S)
+
+
+def cli_name(k):
+    """ "Claude Code" or "Codex" from its report or the program in front (hc get's foreground: Claude
+    Code's own build is named for its version, its command says claude; Codex from npm is node), else None."""
+    st = k.get("status") if isinstance(k.get("status"), dict) else {}
+    fg = k.get("foreground") or {}
+    words = [st.get("app"), k.get("agent"), fg.get("name"), (fg.get("argv") or [None])[0]]
+    # Something other than a shell in front (Codex from npm is `node`) of a terminal started for one: its command's words.
+    if fg.get("name") and os.path.basename(fg["name"]).lstrip("-") not in SHELLS:
+        words += [a for a in k.get("argv") or [] if os.path.basename(str(a)) in ("claude", "codex")]
+    for a in words:
+        a = os.path.basename(str(a or ""))
+        if a.startswith("claude"):
+            return "Claude Code"
+        if a.startswith("codex"):
+            return "Codex"
+    return None
+
+
+def screen_menu(text):
+    """A CLI's menu on this screen: a line with its cursor mark and a choice beside it at the same column."""
+    lines = [x.replace("\u2502", " ").replace("\u2503", " ").rstrip() for x in str(text or "").split("\n")]
+    for i in range(len(lines) - 1, -1, -1):
+        m = _MARK.match(lines[i])
+        if m and any(x.strip() and len(x) - len(x.lstrip()) == len(m.group(1)) for x in lines[max(0, i - 6):i] + lines[i + 1:i + 7]):
+            return True
+    return False
+
+
+def start_screen(k):
+    """Why an agent waits on its CLI's own start screen ("Claude Code asks to trust this folder"), or None."""
+    cli = cli_name(k)
+    made = k.get("created_ms")
+    if not cli or status_word(k) or (k.get("turn") or 0) > 0 or not made or now() - made < SCREEN_AFTER_MS:
+        return None
+    r = run(["hc", "read", k["address"]])
+    if r.returncode != 0 or not screen_menu(r.stdout):
+        return None
+    return f"{cli} asks to trust this folder" if _TRUST.search(r.stdout) else f"{cli} waits on its start screen"
 
 
 STARTING_MS = 90_000

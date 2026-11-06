@@ -14,7 +14,7 @@ import * as SC from "../core/screens.js";
 import * as CV from "../core/chat-view.js";
 import * as AG from "../core/agents.js";
 
-const { ScreenWatch, starting, cliOf, readScreen, screenText, pressKeys, SCREEN } = SC as any;
+const { ScreenWatch, mayStart, cliOf, readScreen, screenText, pressKeys, SCREEN } = SC as any;
 const { LOST, lostMessage, shellWord, WORDS, sessionStarted, sessionFailed } = CV as any;
 const { freshArgv } = AG as any;
 const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
@@ -52,7 +52,7 @@ export class AgentWatch {
       for (const w of this.o.watched()) {
         const k: any = this.hub.terminals.get(w.addr);
         if (!k) continue;
-        if (starting(k) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
+        if (mayStart(k) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
         if (this.lostCandidate(k)) await this.checkLost(w).catch(() => undefined);
       }
     } finally { this.busy = false; }

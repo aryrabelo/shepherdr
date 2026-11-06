@@ -436,7 +436,7 @@ def diff_events(facts, seen):
             if f.get("attention") and f.get("attention") != prev.get("attention"):
                 out.append(("failed", f))
             # Needs you: its agent asks something, or waits for a reply (the status people see).
-            if needs in ("asks", "reply") and prev.get("needs") not in ("asks", "reply"):
+            if needs in ("asks", "reply", "screen") and prev.get("needs") not in ("asks", "reply", "screen"):
                 out.append(("needs-you", f))
             stalled = f["state"] == "running" and ((status == "stopped" and not f.get("starting")) or (cur["quiet"] and now() - cur["quiet"] >= STALL_MS))
             if stalled and not prev.get("stalled"):

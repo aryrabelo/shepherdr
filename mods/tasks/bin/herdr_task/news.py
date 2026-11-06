@@ -129,6 +129,14 @@ def news_pass(report, folder=None):
                     else:
                         t.pop("waits", None)
                     s.dirty = True
+                # On its CLI's own start screen (start_screen()): Needs you in the Tasks panel too.
+                screen = v["why"] if v.get("needs") == "screen" else None
+                if s.write and t.get("screen") != screen:
+                    if screen:
+                        t["screen"] = screen
+                    else:
+                        t.pop("screen", None)
+                    s.dirty = True
                 # Quiet on its own background work (SHEP-53): Working in the Tasks panel too.
                 if s.write and bool(t.get("own_work")) != bool(v.get("own_work")):
                     if v.get("own_work"):

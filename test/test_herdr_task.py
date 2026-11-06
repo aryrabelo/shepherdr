@@ -2945,3 +2945,74 @@ class Feedback(unittest.TestCase):
         with open(os.path.join(BIN, "herdr_task", "autopilot.py")) as f:
             self.assertIn("herdr-task feedback", f.read())
         self.assertIn("feedback", __import__("herdr_task.launch", fromlist=["OWN"]).OWN)
+
+
+class StartScreen(unittest.TestCase):
+    """Issue 755: a worker started in a folder Claude Code never opened stops on its folder-trust
+    dialog, which no hook reports. Needs you, the dialog as the reason (the chat's card answers it),
+    never pressed here; herdr-low's OOM score write skipped where /proc lacks it."""
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.agents as agents
+        self.agents, self.mock = agents, mock
+        with open(os.path.join(ROOT, "core", "start-screen.cases.json")) as f:
+            self.cases = json.load(f)
+        self.clock = 1_800_000_000_000
+        self.screen, self.ran = self.cases["trust"], []
+
+        def run(argv, **kw):
+            self.ran.append(argv)
+            return subprocess.CompletedProcess(argv, 0, self.screen, "")
+        for name, value in (("now", lambda: self.clock), ("run", run)):
+            p = mock.patch.object(agents, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.task = {"id": 5, "title": "Fix", "state": "running", "started": self.clock - 60_000,
+                     "agents": [{"address": "t5", "at": self.clock - 60_000}]}
+
+    def worker(self, **more):
+        """As hc get gives it: started low, Claude Code's build (named for its version) in front."""
+        return {"address": "t5", "agent": "sh", "state": "live", "turn": 0, "created_ms": self.clock - 30_000,
+                "argv": ["sh", "-c", "low", "herdr-low", "claude"], "foreground": {"name": "2.1.319", "argv": ["claude", "--settings", "{}"]},
+                "labels": {"herdr.role": "worker"}, **more}
+
+    def test_the_trust_dialog_needs_you(self):
+        self.assertEqual(self.agents.task_status(self.task, [self.worker()]), ("needs", "screen", self.cases["words"]))
+        self.assertEqual(self.ran, [["hc", "read", "t5"]])  # read, never a key pressed
+        self.assertLessEqual(len(self.cases["words"]), self.agents.LINE_MAX)
+
+    def test_another_start_screen_needs_you_too(self):
+        self.screen = "Choose the text style\n\n ❯ 1. Dark mode\n   2. Light mode\n\nEnter to confirm"
+        self.assertEqual(self.agents.task_status(self.task, [self.worker()]), ("needs", "screen", "Claude Code waits on its start screen"))
+
+    def test_codex_from_npm_runs_as_node(self):
+        self.screen = "Hooks need review\n\n› 1. Review hooks\n  2. Trust all and continue\n\n  Press enter to confirm or esc to go back"
+        codex = self.worker(argv=["sh", "-c", "low", "herdr-low", "codex", "Brief"], foreground={"name": "node", "argv": ["node", "/usr/local/bin/codex"]})
+        self.assertEqual(self.agents.task_status(self.task, [codex]), ("needs", "screen", "Codex waits on its start screen"))
+
+    def test_working_while_it_starts_or_once_it_reports(self):
+        self.assertEqual(self.agents.task_status(self.task, [self.worker(created_ms=self.clock - 2000)])[0], "working")
+        self.assertEqual(self.agents.task_status(self.task, [self.worker(status={"state": "working", "app": "claude-code"})])[0], "working")
+        self.screen = "Claude Code v2.1.319\n\n  Loading…"
+        self.assertEqual(self.agents.task_status(self.task, [self.worker()])[0], "working")
+        # its shell in front (the CLI ended): not read
+        self.ran.clear()
+        self.agents.task_status(self.task, [self.worker(foreground={"name": "zsh", "argv": ["-zsh"]})])
+        self.assertEqual(self.ran, [])
+
+    def test_hc_ls_records_go_by_the_schedulers_last_look(self):
+        listed = {"address": "t5", "agent": "sh", "state": "live", "turn": 0}
+        self.assertEqual(self.agents.task_status(self.task, [listed])[0], "working")
+        self.task["screen"] = self.cases["words"]
+        self.assertEqual(self.agents.task_status(self.task, [listed]), ("needs", "screen", self.cases["words"]))
+        self.assertEqual(self.agents.task_status(self.task, [dict(listed, status="working")])[0], "working")
+        self.assertEqual(self.ran, [])
+
+    def test_herdr_low_says_nothing_where_proc_lacks_the_oom_score(self):
+        from herdr_task.launch import LOW
+        r = subprocess.run(["sh", "-c", LOW, "herdr-low", "echo", "ok"], capture_output=True, text=True)
+        # Only the OOM score's line: nice may refuse in a sandbox and say so, which isn't this.
+        self.assertNotIn("oom_score_adj", r.stderr)
+        self.assertIn("[ -w /proc/self/oom_score_adj ] &&", LOW)

@@ -15,6 +15,12 @@ describe("a task's status (as herdr-task's task_status)", () => {
     expect(at({ id: 1, state: "running" }, [{ address: "t1", status: "blocked" }])).toMatchObject({ section: "needs", needs: "asks", why: REASONS.question });
     expect(at({ id: 1, state: "running", waits: "Pick a colour" }, [{ address: "t1", status: "blocked" }]).why).toBe("Pick a colour");
   });
+  test("its CLI on a start screen of its own (issue 755: trust this folder) needs you, until its agent reports", () => {
+    const screen = "Claude Code asks to trust this folder";
+    expect(at({ id: 1, state: "running", started: NOW - 10_000, screen }, [{ address: "t1", status: null }])).toMatchObject({ section: "needs", needs: "screen", why: screen });
+    expect(at({ id: 1, state: "running", screen }, [{ address: "t1", status: "working" }]).section).toBe("working");
+    expect(at({ id: 1, state: "running", started: NOW - 10_000 }, [{ address: "t1", status: null }]).section).toBe("working");
+  });
   test("working while its agent works, or while just started", () => {
     expect(at({ id: 1, state: "running" }, [{ address: "t1", status: "working" }]).section).toBe("working");
     expect(at({ id: 1, state: "running", started: NOW - 10_000 }).section).toBe("working");
