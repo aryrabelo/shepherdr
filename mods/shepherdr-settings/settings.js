@@ -20,6 +20,7 @@ import * as fs from "fs/promises";
 import * as agent from "./agent.js";
 // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
 import { modelLabel, choicesFrom } from "./core/settings.js";
+import { AGENT_KEYS, FULL_PERM } from "./core/agents.js";
 
 const ROW = 31, LABEL = 110;
 const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
@@ -28,12 +29,13 @@ const LAST = () => `${appHome()}/data/coordinator-last.json`;
 // What the agents on this machine (or `machine`) offer: { menus, icons, installed, permDefault,
 // defaults } (defaults: the CLI's own, for a first time).
 export async function loadChoices(machine = null) {
-  const [claude, codex, known] = await Promise.all([agent.defaults("claude", machine), agent.defaults("codex", machine),
-    knownAgents({ on: machine }).catch(() => [])]);
+  const [claude, codex, omp, known] = await Promise.all([agent.defaults("claude", machine), agent.defaults("codex", machine),
+    agent.defaults("omp", machine), knownAgents({ on: machine }).catch(() => [])]);
   const prog = (k) => known.find((a) => a.key === k || (a.run ?? [])[0] === k);
-  const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
-  const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
-  const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
+  // omp, when Herdr doesn't list it: installed once it lists its models
+  const installed = Object.fromEntries(AGENT_KEYS.map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude" || (k === "omp" && Boolean(omp?.models?.length))]));
+  const icons = Object.fromEntries(AGENT_KEYS.map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+  const { menus, permDefault, defaults } = choicesFrom({ claude, codex, omp }, installed);
   return { menus, icons, installed, permDefault, defaults };
 }
 
@@ -66,8 +68,8 @@ function choose(coord, agentKey, id) {
   if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
   if (!m.fast) next.fast = false;
   if (agentKey !== sel.agent) {
-    const full = sel.perm === "bypassPermissions" || sel.perm === "full";
-    next.perm = full ? (agentKey === "claude" ? "bypassPermissions" : "full") : data.permDefault[agentKey];
+    const full = Object.values(FULL_PERM).includes(sel.perm);
+    next.perm = full ? FULL_PERM[agentKey] ?? null : data.permDefault[agentKey];
   }
   coord.sel = next;
 }

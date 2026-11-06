@@ -368,8 +368,9 @@ function ModelMenu({ chat, typed }: { chat: string; typed?: string }) {
     if (!m.fast) next.fast = false
     if (m.agent !== was.agent) {
       // another agent: its own permission modes; full access stays full access
-      const full = was.perm === 'bypassPermissions' || was.perm === 'full'
-      next.perm = full ? (m.agent === 'claude' ? 'bypassPermissions' : 'full') : d.permDefault[m.agent] ?? null
+      const FULL = AGc.FULL_PERM as Record<string, string>
+      const full = Object.values(FULL).includes(was.perm ?? '')
+      next.perm = full ? FULL[m.agent] ?? null : d.permDefault[m.agent] ?? null
       next.fast = false
     }
     return next

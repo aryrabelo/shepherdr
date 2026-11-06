@@ -8,7 +8,7 @@
 // from what runs now, one Restart button, said first to start a new conversation when it switches
 // agent. The chat does the restart.
 // Props (plain data from the chat; this mod reads nothing else about the agent):
-//   { pane, current: { agent, model, effort, fast, perm }, select?: { agent, model } (comes chosen), menus: { claude?, codex? }
+//   { pane, current: { agent, model, effort, fast, perm }, select?: { agent, model } (comes chosen), menus: { claude?, codex?, omp? }
 //     (agent.js menuFor), icons: { <agent>: { icon, tint } }, permDefault, remote (another machine's
 //     Assistant: that machine's name; the menu only shows it), overlay }
 // The overlay is frameless and as tall as the menu at its tallest (the chat counts it with the
@@ -23,9 +23,9 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, VirtualListScrollHandle, v_virtual_list, Scrollbar } from "gpui-base";
 import { theme, props, setShared, closeOverlay, home, readTextFile, writeTextFile } from "herdr";
-import { modelSections, parsePicks, pickKey, withPin, withRecent, PICKS_FILE } from "./core/agents.js";
+import { modelSections, parsePicks, pickKey, withPin, withRecent, PICKS_FILE, AGENT_KEYS, FULL_PERM } from "./core/agents.js";
 
-const AGENTS = ["claude", "codex"];
+const AGENTS = AGENT_KEYS;
 const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
 // Sizes, as the chat counts them for the overlay's height (mods/chat openPicker): the model list
 // scrolls past LIST; NOTE is a quiet line (another machine's; a new conversation's, two lines).
@@ -115,8 +115,8 @@ export default class ModelMenu extends View {
     if (!m.fast) next.fast = false;
     if (m.agent !== was.agent) {
       // Another agent: its own permission modes; full access stays full access.
-      const full = was.perm === "bypassPermissions" || was.perm === "full";
-      next.perm = full ? (m.agent === "claude" ? "bypassPermissions" : "full") : this.p.permDefault?.[m.agent] ?? null;
+      const full = Object.values(FULL_PERM).includes(was.perm);
+      next.perm = full ? FULL_PERM[m.agent] ?? null : this.p.permDefault?.[m.agent] ?? null;
       next.fast = false;
     }
     this.sel = next;

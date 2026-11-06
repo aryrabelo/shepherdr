@@ -10,7 +10,7 @@ from .base import Fail, HOME, MAX_RUNNING
 
 
 # What each agent key starts by default. Unknown keys run as themselves; --argv overrides.
-AGENTS = {"claude": ["claude"], "codex": ["codex", "--no-daemon"]}
+AGENTS = {"claude": ["claude"], "codex": ["codex", "--no-daemon"], "omp": ["omp"]}
 
 
 # ---- the person's settings ------------------------------------------------------------------
@@ -193,6 +193,17 @@ def argv_for(pick):
         elif perm:
             a += ["-s", "workspace-write", "-a", "on-request"]
         return a
+    if agent == "omp":
+        # omp: --model takes a fuzzy name or provider/id, --thinking its level, --approval-mode its
+        # own modes (always-ask, write, yolo; omp's default is yolo).
+        a = ["omp"]
+        if pick.get("model"):
+            a += ["--model", pick["model"]]
+        if pick.get("effort"):
+            a += ["--thinking", pick["effort"]]
+        if pick.get("perm"):
+            a += ["--approval-mode", pick["perm"]]
+        return a
     return [agent] if agent else None
 
 
@@ -229,7 +240,7 @@ def argv_model(argv):
         nxt = argv[i + 1]
         if a in ("--model", "-m"):
             model = nxt
-        elif a == "--effort":
+        elif a in ("--effort", "--thinking"):
             effort = nxt
         elif a in ("-c", "--config") and nxt.startswith("model_reasoning_effort="):
             effort = nxt.split("=", 1)[1].strip("\"'")
@@ -337,7 +348,7 @@ def by_layer(s, space, section, key, value, default):
 
 def other_cli(agent):
     """The reviewer by default: the other CLI than the task agent's where it's installed, else its own."""
-    other = {"claude": "codex", "codex": "claude"}.get(agent)
+    other = {"claude": "codex", "codex": "claude", "omp": "claude"}.get(agent)
     return other if other and shutil.which(other) else agent
 
 

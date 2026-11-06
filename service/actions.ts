@@ -279,7 +279,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || "Autopilot didn't change.");
     return { ok: true };
   }
-  if (b?.type === "model-pin" && compat.agents && ["claude", "codex"].includes(b.agent) && typeof b.model === "string" && /^[\w.\[\]-]{1,60}$/.test(b.model)) {
+  if (b?.type === "model-pin" && compat.agents && ["claude", "codex", "omp"].includes(b.agent) && typeof b.model === "string" && /^[\w.\[\]:\/-]{1,120}$/.test(b.model)) {
     // the model menu's star: pinned to the top of its agent's list (core/agents.js PICKS_FILE, as the window's)
     return { ok: true, picks: (compat.agents as any).pin(b.agent, b.model) };
   }
@@ -289,8 +289,9 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     const a = chat(b.chat), reader = compat.reader?.(a);
     if (b.type === "restart-info") return compat.agents.info(a, reader);
     if (b.type === "model-menu") return { ok: true, menu: await (compat.agents as any).menu(a, reader) };
-    if (!["claude", "codex"].includes(b.kind)) throw new Error("Pick Claude Code or Codex.");
-    const opt = (v: unknown) => (typeof v === "string" && /^[\w.\[\]-]{1,60}$/.test(v) ? v : undefined);
+    if (!["claude", "codex", "omp"].includes(b.kind)) throw new Error("Pick Claude Code, Codex or omp.");
+    // a model id as each CLI writes it (omp's: provider/id)
+    const opt = (v: unknown) => (typeof v === "string" && /^[\w.\[\]:\/-]{1,120}$/.test(v) ? v : undefined);
     const next = await compat.agents.restart(a, reader, { kind: b.kind, model: opt(b.model), effort: opt(b.effort), speed: opt(b.speed), perm: opt(b.perm) });
     return { ok: true, terminal: next };
   }

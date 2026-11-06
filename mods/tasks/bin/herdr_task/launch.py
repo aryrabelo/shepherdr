@@ -63,7 +63,8 @@ def own_rules(path):
 
 
 def own_argv(argv):
-    """An agent's argv with its own herdr-task commands allowed (Claude Code and Codex)."""
+    """An agent's argv with its own herdr-task commands allowed (Claude Code and Codex). omp gets
+    none: its own approval mode decides (its default, yolo, runs them; always-ask asks for each)."""
     path, out = own_path(), list(argv)
     k = agent_key(out)
     if k == "claude":
@@ -149,12 +150,16 @@ def cmd_allow(args):
 # ---- starting agents ------------------------------------------------------------------------
 
 
-def resume_argv(argv, session):
+def resume_argv(argv, session, log=None):
+    """argv resuming `session` (omp: by its log's path when that is here, which omp opens as it is,
+    wherever it started; by id it looks for it), or None for a CLI that can't."""
     k = agent_key(argv)
     if k == "claude":
         return argv + ["--resume", session]
     if k == "codex":
         return [argv[0], "resume"] + argv[1:] + [session]
+    if k == "omp":
+        return argv + ["--resume", log if log and os.path.isfile(log) else session]
     return None
 
 

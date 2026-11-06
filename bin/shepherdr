@@ -29,6 +29,7 @@ What goes where (each under --root, default your home):
   .config/systemd/user/shepherdr.service    Linux: keeps the service running (systemctl --user)
   Library/LaunchAgents/dev.shepherdr.service.plist   macOS: the same with launchd
   ~/.claude/settings.json, ~/.codex/hooks.json   the question-card hooks (not with --no-hooks)
+  ~/.omp/agent/extensions/herdr-session-note.ts   omp's session note, where omp is (not with --no-hooks)
 
 Never overwritten: a mod, layout or lib file that isn't ours (it refuses, naming each; --adopt backs
 them up and takes them over), a key you set (unless you say yes), a file you changed since the last
@@ -81,6 +82,10 @@ HOOKS = [  # (file under home, event, entry): the question and permission cards 
     (".codex/hooks.json", "SessionStart",
      {"hooks": [{"type": "command", "command": "sh '{app}/mods/chat/session-note.sh'", "timeout": 10}]}),
 ]
+
+# omp (Oh My Pi) has no hooks file: its session note is an extension of its own, the source's
+# mods/chat/omp-session-note.ts with this app's folder in it (SessionStart's words; no question cards).
+OMP_NOTE = ".omp/agent/extensions/herdr-session-note.ts"
 
 
 class Stop(Exception):
@@ -716,6 +721,29 @@ def add_hooks(r, rec):
     return done
 
 
+def add_omp_note(r, src, rec):
+    """omp's session note (OMP_NOTE), where omp keeps its agent folder: written, or left as it is
+    when it's the same. One someone changed since stays theirs (the new one goes beside it). -> True when it's ours there."""
+    path = r.p(OMP_NOTE)
+    if not os.path.isdir(os.path.dirname(os.path.dirname(path))):
+        return False  # omp isn't here
+    data = (read(os.path.join(src, "mods", "chat", "omp-session-note.ts")) or b"").replace(b"{app}", r.p(APP).encode())
+    if not data:
+        return False
+    cur = read(path)
+    if cur == data:
+        return True
+    if cur is not None and rec.get("omp_note") != hashlib.sha256(cur).hexdigest():
+        if not r.dry:
+            atomic_write(path + ".new", data)
+        r.notes.append(f"omp: {path} isn't Shepherdr's as it was, left alone; the new one is beside it (.new)")
+        return False
+    if not r.dry:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        atomic_write(path, data)
+    return True
+
+
 def check_tools(root_is_home):
     """Herdr's versions (when it's here) and the programs Shepherdr needs. -> (problems, notes)."""
     bad, notes = [], []
@@ -833,6 +861,8 @@ def cmd_install(a, update=False):
         install_guard(r, src, rec)
     if not a.no_hooks:
         rec["hooks"] = add_hooks(r, rec)
+        if add_omp_note(r, src, rec):
+            rec["omp_note"] = hashlib.sha256(read(r.p(OMP_NOTE)) or b"").hexdigest() if not r.dry else rec.get("omp_note")
     rec.update({"version": VERSION, "source": src, "at": r.stamp, "root": root})
     if a.dry_run:
         say("  keys.json: " + ("would change" if keys_changed else "nothing to add"))
@@ -1166,6 +1196,10 @@ def cmd_uninstall(a):
         if os.path.lexists(saved) and not os.path.lexists(r.p(rel)) and not a.dry_run:
             os.makedirs(os.path.dirname(r.p(rel)), exist_ok=True)
             os.rename(saved, r.p(rel))
+    # omp's session note, unless someone changed it since.
+    note = read(r.p(OMP_NOTE))
+    if note is not None and rec.get("omp_note") == hashlib.sha256(note).hexdigest() and not a.dry_run:
+        os.remove(r.p(OMP_NOTE))
     # Hooks: our entries out.
     for f in {h[0] for h in rec.get("hooks", [])}:
         p = r.p(f)
@@ -1368,7 +1402,7 @@ def main(argv):
             c.add_argument("--adopt", action="store_true", help="files by these names that aren't Shepherdr's: back them up and take them over")
             c.add_argument("--guard", action="store_true", help="also put the herdr-app guard on the PATH (refuses a window with another home)")
             c.add_argument("--keys", choices=["ask", "keep", "ours"], default="ask", help="a key you already use: ask (default; keep without a terminal), keep yours, or take ours")
-            c.add_argument("--no-hooks", action="store_true", help="leave Claude Code's and Codex's settings alone")
+            c.add_argument("--no-hooks", action="store_true", help="leave Claude Code's, Codex's and omp's settings alone")
             c.add_argument("--yes", action="store_true", help="ask nothing (keys: keep yours unless --keys ours)")
             c.add_argument("--force", action="store_true", help="install although a check failed")
             c.add_argument("--web", action="store_true", help="web only: no herdr-app (the service, the web app, herdr-task and the helpers)")

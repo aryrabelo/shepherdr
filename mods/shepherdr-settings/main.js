@@ -39,7 +39,7 @@ import { webSection } from "./web-section.js";
 // into its starting prompt; Herdr runs nothing itself.
 import { SECTIONS, ROLES, NOTES, MERGE, MUST_FIX, ROUNDS, ARCHIVE, ABOUT, BACKUP, REACTIONS, STAR, starState, upgradeReactions, NOTIFY_ABOUT, TITLE, SPACE_TITLE,
   EVERYWHERE, CHANGED_HERE, RESET, EDIT_INSTRUCTIONS, USE_OTHER_CLI, LOADING_AGENTS, SAVED, sameAs as sameAsWords,
-  spacesOwn, otherCliWords, backupProblem, notifyMachineAbout, machineLabel, TASK_ROWS, LEVEL } from "./core/settings.js";
+  spacesOwn, otherCliWords, otherCli, backupProblem, notifyMachineAbout, machineLabel, TASK_ROWS, LEVEL } from "./core/settings.js";
 
 const I = (name) => `mods/shepherdr-settings/${name}.svg`;
 // A page's title, and a Tasks row's (by its key, section.field).
@@ -305,8 +305,7 @@ export default class ShepherdrSettings extends View {
 
   // The CLI a worker runs here, and the other one (an unset Reviewer and Backup use it).
   otherCli() {
-    const worker = shepherdrFor(this.cfg, this.scope).worker?.agent ?? "claude";
-    return worker === "codex" ? "claude" : "codex";
+    return otherCli(shepherdrFor(this.cfg, this.scope).worker?.agent ?? "claude");
   }
 
   // The model buttons start from what applies in this scope. An unset role shows what runs: the

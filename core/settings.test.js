@@ -48,6 +48,24 @@ test("the model button says what the window's does", () => {
     .toMatchObject({ agent: "codex", model: "gpt-5", effort: null, perm: "full" });
 });
 
+test("omp is offered as a task agent and reviewer once it lists its models (ASH-2)", () => {
+  const omp = { models: [{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: ["low", "high"] }] };
+  const c = S.choicesFrom({ claude: { model: "opus", per: {} }, codex: {}, omp }, { claude: true, codex: true, omp: true });
+  expect(c.menus.omp.name).toBe("omp");
+  expect(c.permDefault.omp).toBe("yolo");
+  expect(S.modelLabel(c.menus, { agent: "omp", model: "anthropic/claude-opus-5-5", effort: "high" })).toBe("Claude Opus 5.5 · High");
+  // not installed: not offered
+  expect(S.choicesFrom({ claude: {}, codex: {}, omp }, { claude: true, codex: true }).menus.omp).toBeUndefined();
+  // omp's reviewer by default: Claude Code
+  expect(S.otherCli("omp")).toBe("claude");
+  expect(S.roleSel("reviewer", null, c, "omp")).toMatchObject({ unset: true, sel: { agent: "claude" } });
+  // full access stays full access, either way
+  expect(S.chooseModel(c.menus, c.permDefault, { agent: "claude", model: "opus", perm: "bypassPermissions" }, "omp", "anthropic/claude-opus-5-5"))
+    .toMatchObject({ agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" });
+  expect(S.chooseModel(c.menus, c.permDefault, { agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" }, "claude", "opus"))
+    .toMatchObject({ agent: "claude", perm: "bypassPermissions" });
+});
+
 test("Backup's warning, an add-on's line and Web's state, in the window's words", () => {
   const checks = { "": { codex: "ok" }, "vm-ssa": { codex: "signed-out" }, box: { codex: "missing" } };
   expect(S.backupProblem(checks, null, "codex")).toBe("Can't on vm-ssa: Codex is signed out. Can't on box: Codex is not installed.");

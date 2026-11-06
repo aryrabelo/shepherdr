@@ -430,6 +430,37 @@ class Install(unittest.TestCase):
         run("install", "--root", self.root, "--dry-run")
         self.assertEqual(tree(self.root), self.before)
 
+    def test_omp_gets_its_session_note_where_omp_is(self):
+        """ASH-2: omp has no hooks file; its session note is an extension of its own in its agent
+        folder, with this app's session-note.sh in it. No omp here: nothing written. Uninstall takes it out."""
+        note = self.p(".omp/agent/extensions/herdr-session-note.ts")
+        run("install", "--root", self.root, "--yes")
+        self.assertFalse(os.path.lexists(self.p(".omp")))  # omp isn't here
+        os.makedirs(self.p(".omp/agent/extensions"))
+        with open(self.p(".omp/agent/extensions/mine.ts"), "w") as f:
+            f.write("// the person's own\n")
+        run("install", "--root", self.root, "--yes")
+        with open(note) as f:
+            text = f.read()
+        self.assertIn(f'"{self.p(APP)}/mods/chat/session-note.sh"', text)
+        self.assertNotIn("{app}", text)
+        run("install", "--root", self.root, "--yes")  # again: the same, left as it is
+        run("uninstall", "--root", self.root)
+        self.assertFalse(os.path.lexists(note))
+        self.assertTrue(os.path.isfile(self.p(".omp/agent/extensions/mine.ts")))
+
+    def test_omp_note_someone_changed_stays_theirs(self):
+        os.makedirs(self.p(".omp/agent/extensions"))
+        note = self.p(".omp/agent/extensions/herdr-session-note.ts")
+        with open(note, "w") as f:
+            f.write("// theirs\n")
+        out = run("install", "--root", self.root, "--yes").stdout
+        self.assertEqual(open(note).read(), "// theirs\n")
+        self.assertTrue(os.path.isfile(note + ".new"))
+        self.assertIn("left alone", out)
+        run("uninstall", "--root", self.root)
+        self.assertEqual(open(note).read(), "// theirs\n")
+
 
 class AudioTools(unittest.TestCase):
     def test_doctor_names_the_mic_and_speaker_tools_per_platform(self):

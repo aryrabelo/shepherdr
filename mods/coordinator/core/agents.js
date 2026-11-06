@@ -2,7 +2,9 @@
 // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
 // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
 // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
-export const NAMES = { claude: "Claude Code", codex: "Codex" };
+export const NAMES = { claude: "Claude Code", codex: "Codex", omp: "omp" };
+// Every agent CLI Herdr knows, in the order menus list them (omp: Oh My Pi, `omp` on the PATH).
+export const AGENT_KEYS = ["claude", "codex", "omp"];
 
 // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
 // `match` the names a running agent may report for it.
@@ -20,7 +22,14 @@ const PERMS = {
   claude: [{ id: "manual", label: "Ask" }, { id: "auto", label: "Auto" }, { id: "acceptEdits", label: "Accept edits" },
     { id: "plan", label: "Plan" }, { id: "bypassPermissions", label: "Full access" }],
   codex: [{ id: "read-only", label: "Read only" }, { id: "auto", label: "Auto" }, { id: "full", label: "Full access" }],
+  // omp: its --approval-mode (omp's own default is yolo)
+  omp: [{ id: "always-ask", label: "Ask" }, { id: "write", label: "Write" }, { id: "yolo", label: "Full access" }],
 };
+// Each CLI's full access, and the mode a new agent gets unless picked (Claude Code's: its settings' mode).
+export const FULL_PERM = { claude: "bypassPermissions", codex: "full", omp: "yolo" };
+export const PERM_DEFAULT = { codex: "auto", omp: "yolo" };
+// omp's thinking levels (--thinking), for a model that doesn't list its own.
+const OMP_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 // What a model id says, in words: "claude-opus-5-5" → "Opus 5.5", "opus[1m]" → "Opus 1M".
 export function modelName(id) {
@@ -59,6 +68,12 @@ export const DEFAULTS = `
 if [ "$1" = claude ]; then
   f="$HOME/.claude/settings.json"
   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
+elif [ "$1" = omp ]; then
+  if command -v omp >/dev/null 2>&1; then
+    printf 'models\\t'
+    if command -v jq >/dev/null 2>&1; then omp models --json 2>/dev/null | jq -c '[.models[] | {id: .selector, label: .name, efforts: (.thinking // [])}]' 2>/dev/null
+    else omp models --json 2>/dev/null | tr -d '\\n'; echo; fi
+  fi
 else
   f="$HOME/.codex/config.toml"
   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
@@ -81,6 +96,15 @@ export function parseDefaults(kind, stdout) {
     if (t > 0) out[line.slice(0, t)] = line.slice(t + 1);
   }
   let models = null;
+  if (kind === "omp") {
+    // `omp models --json`, as DEFAULTS' jq makes it ([{ id, label, efforts }]) or as omp prints it ({ models })
+    if (out.models) try {
+      const d = JSON.parse(out.models);
+      models = (Array.isArray(d) ? d : (d?.models ?? []).map((m) => ({ id: m.selector, label: m.name, efforts: m.thinking ?? [] })))
+        .filter((m) => m?.id).map((m) => ({ id: m.id, label: m.label || m.id, efforts: (m.efforts ?? []).filter((e) => e !== "off" && e !== "auto"), fast: false, defaultEffort: null }));
+    } catch {}
+    return { model: null, effort: null, fast: false, models };
+  }
   if (out.models) {
     try {
       models = (JSON.parse(out.models).models ?? []).filter((m) => m.visibility !== "hide").map((m) => ({
@@ -114,6 +138,11 @@ export function current(kind, argv, meta, dflt) {
     const perm = argv.includes("--dangerously-skip-permissions") ? "bypassPermissions" : flag(argv, "--permission-mode") ?? dflt.mode ?? "manual";
     return { agent: "claude", model: meta.model ?? alias, alias, effort: meta.effort ?? flag(argv, "--effort") ?? per ?? dflt.effort,
       fast: Boolean(fast), perm: perm === "default" ? "manual" : perm, used: meta.used ?? null, window: meta.window ?? (big ? 1000000 : 200000) };
+  }
+  if (kind === "omp") {
+    const model = meta.model ?? flag(argv, "--model") ?? dflt.model ?? null;
+    return { agent: "omp", model, label: dflt.models?.find((m) => m.id === model)?.label ?? null, perm: flag(argv, "--approval-mode") ?? "yolo",
+      effort: meta.effort ?? flag(argv, "--thinking") ?? dflt.effort ?? null, fast: false, used: meta.used ?? null, window: meta.window ?? null };
   }
   const o = overrides(argv);
   const tier = o.service_tier;
@@ -156,6 +185,11 @@ export function menuFor(agent, dflt, current = null) {
     if (current && !models.some((m) => m.id === current)) models.unshift({ id: current, name: modelName(current), efforts: CLAUDE_EFFORTS, defaultEffort: dflt?.effort ?? null, fast: false });
     return { name: NAMES.claude, perms: PERMS.claude, models };
   }
+  if (agent === "omp") {
+    const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts?.length ? m.efforts : OMP_EFFORTS, defaultEffort: null, fast: false }));
+    if (current && !all.some((m) => m.id === current)) all.unshift({ id: current, name: current, efforts: OMP_EFFORTS, defaultEffort: null, fast: false });
+    return { name: NAMES.omp, perms: PERMS.omp, models: all };
+  }
   const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts?.length ? m.efforts : ["low", "medium", "high", "xhigh"],
     defaultEffort: m.defaultEffort ?? dflt?.effort ?? null, fast: m.fast }));
   if (current && !all.some((m) => m.id === current)) all.unshift({ id: current, name: current, efforts: ["low", "medium", "high", "xhigh"], defaultEffort: dflt?.effort ?? null, fast: false });
@@ -164,7 +198,7 @@ export function menuFor(agent, dflt, current = null) {
 
 // The levels a model typed by id gets: its agent's usual ones.
 export function typedModel(agent, id) {
-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
+  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "omp" ? OMP_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
 }
 
 // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
@@ -332,6 +366,14 @@ export function argvFor(pick, old) {
     if (pick.perm === "bypassPermissions") a.push("--dangerously-skip-permissions");
     else if (pick.perm) a.push("--permission-mode", pick.perm === "manual" ? "default" : pick.perm);
     if (same && old.session) return { argv: [...a, "--resume", old.session], resume: true, base: a };
+    return { argv: a, resume: false, base: a };
+  }
+  if (pick.agent === "omp") {
+    // as herdr-task's argv_for: --model, --thinking, --approval-mode; no session carried over
+    const a = ["omp"];
+    if (pick.model) a.push("--model", pick.model);
+    if (pick.effort) a.push("--thinking", pick.effort);
+    if (pick.perm) a.push("--approval-mode", pick.perm);
     return { argv: a, resume: false, base: a };
   }
   // Codex runs its commands outside hc without --no-daemon (as herdr-task and restart.sh add).

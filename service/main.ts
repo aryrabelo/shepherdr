@@ -191,7 +191,9 @@ const readDefaults = async () => {
   try {
     let check: any = {};
     try { check = JSON.parse(readFileSync(join(HOME, ".herdr", "cli-check.json"), "utf8"))?.machines?.[""] ?? {}; } catch {}
-    settings.choices = SC.choicesFrom(await compat.agents!.ownDefaults(), { claude: check.claude !== "missing", codex: check.codex !== "missing" });
+    const own: any = await compat.agents!.ownDefaults();
+    // omp isn't in herdr-task's check: offered once it lists its models here
+    settings.choices = SC.choicesFrom(own, { claude: check.claude !== "missing", codex: check.codex !== "missing", omp: Boolean(own.omp?.models?.length) });
     model.rebuild();
   } catch {}
 };

@@ -3,7 +3,7 @@
 // web app's Settings say the same. herdr-task reads the file (herdr_task/settings.py: settings_for); its defaults are
 // DEFAULTS there and here.
 // Shared core: the source is core/settings.js; bin/sync-shared copies it into the mods in lib/COPIES.
-import { NAMES, levelName, current, rowFor, menuFor } from "./agents.js";
+import { NAMES, AGENT_KEYS, FULL_PERM, PERM_DEFAULT, levelName, current, rowFor, menuFor } from "./agents.js";
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
@@ -83,7 +83,8 @@ export const USE_OTHER_CLI = "Use other CLI";
 export const LOADING_AGENTS = "Loading agents…";
 // An unset Reviewer's button: what runs, the other CLI.
 export const otherCliWords = (cli) => `Other CLI (${NAMES[cli] ?? cli})`;
-export const otherCli = (worker) => (worker === "codex" ? "claude" : "codex");
+// (omp's other is Claude Code, as herdr-task's other_cli)
+export const otherCli = (worker) => (worker === "codex" || worker === "omp" ? "claude" : "codex");
 // Reactions (herdr-task's reactions.py): every agent (Assistants, task workers, automation runs, agent tabs) reacts to
 // some of your messages with an emoji; off, none does. Kept as agents.reactions; SHEP-42 kept it as assistant.reactions
 // (upgradeReactions moves it).
@@ -154,8 +155,8 @@ export function modelLabel(menus, sel) {
 // What the agents offer, from each CLI's own settings (agents.js parseDefaults) and which are installed:
 // { menus, permDefault, defaults } (defaults: the first installed CLI's own, what an unset role runs).
 export function choicesFrom(dflts, installed = { claude: true, codex: true }) {
-  const menus = Object.fromEntries(["claude", "codex"].filter((k) => installed[k]).map((k) => [k, menuFor(k, dflts[k])]));
-  const permDefault = { claude: dflts.claude?.mode ?? "manual", codex: "auto" };
+  const menus = Object.fromEntries(AGENT_KEYS.filter((k) => installed[k]).map((k) => [k, menuFor(k, dflts[k])]));
+  const permDefault = { ...PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" };
   const first = menus.claude ? "claude" : Object.keys(menus)[0] ?? "claude";
   const c = current(first, [], {}, dflts[first]);
   const model = rowFor(first, c) ?? menus[first]?.models?.[0]?.id ?? null;
@@ -178,8 +179,8 @@ export function chooseModel(menus, permDefault, sel, agent, id) {
   if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
   if (!m.fast) next.fast = false;
   if (agent !== sel.agent) {
-    const full = sel.perm === "bypassPermissions" || sel.perm === "full";
-    next.perm = full ? (agent === "claude" ? "bypassPermissions" : "full") : permDefault?.[agent] ?? null;
+    const full = Object.values(FULL_PERM).includes(sel.perm);
+    next.perm = full ? FULL_PERM[agent] ?? null : permDefault?.[agent] ?? null;
     next.fast = false;
   }
   return next;

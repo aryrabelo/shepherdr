@@ -69,3 +69,21 @@ test("every agent with a fast mode shows the Fast switch, and turning it off sti
   const claudeOff = argvFor({ agent: "claude", model: "opus", fast: false }, { agent: "claude", argv: ["claude"] }).argv;
   expect(current("claude", claudeOff, {}, { fast: true }).fast).toBe(false);
 });
+
+test("omp: its models from `omp models --json`, its levels, its argv (ASH-2)", () => {
+  const raw = JSON.stringify({ models: [{ selector: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", thinking: ["off", "low", "high", "auto"] }, { selector: "zai/glm-5", name: "GLM 5" }] });
+  for (const out of [`models\t${raw}`, `models\t${JSON.stringify([{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: ["low", "high"] }, { id: "zai/glm-5", label: "GLM 5", efforts: [] }])}`]) {
+    const d = parseDefaults("omp", out);
+    const m = menuFor("omp", d);
+    expect(m.name).toBe("omp");
+    expect(m.perms.map((p) => p.id)).toEqual(["always-ask", "write", "yolo"]);
+    expect(m.models[0]).toMatchObject({ id: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", efforts: ["low", "high"] });
+    expect(m.models[1].efforts.length).toBeGreaterThan(0); // one that lists none gets omp's levels
+    const c = current("omp", ["omp", "--model", "anthropic/claude-opus-5-5", "--thinking", "high", "--approval-mode", "write"], {}, d);
+    expect(c).toMatchObject({ agent: "omp", effort: "high", perm: "write" });
+    expect(line(c)).toBe("omp · Claude Opus 5.5 · High");
+  }
+  expect(parseDefaults("omp", "").models).toBeNull(); // omp not here
+  expect(argvFor({ agent: "omp", model: "zai/glm-5", effort: "low", perm: "yolo" }, { agent: "claude", argv: ["claude"] }).argv)
+    .toEqual(["omp", "--model", "zai/glm-5", "--thinking", "low", "--approval-mode", "yolo"]);
+});

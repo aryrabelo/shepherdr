@@ -23,8 +23,8 @@ from .sessions import session_of
 from .settings import ASSISTANT_TEMPLATES
 
 LABEL = "herdr.resume"
-# Claude Code: "No conversation found with session ID: …". Codex: "ERROR: No saved session found with ID …"
-# (core/chat-view.js LOST).
+# Claude Code: "No conversation found with session ID: …". Codex: "ERROR: No saved session found with ID …".
+# omp: 'Error: Session "…" not found.' (core/chat-view.js LOST).
 LOST = re.compile(r"\bno (?:saved )?(?:conversation|session|rollout)\b.*\bfound\b|\b(?:conversation|session)\b.*\bnot found\b", re.I)
 # What a new agent hears when its earlier session is gone (core/chat-view.js FRESH and lostMessage).
 FRESH = ("Your earlier session is gone, so this is a new one that remembers none of it. Check what is already here "
@@ -43,11 +43,15 @@ CLAUDE_VALUE = {"--add-dir", "--mcp-config", "--append-system-prompt", "--system
                 "--model", "--effort", "--settings", "--permission-mode"}
 CODEX_VALUE = {"-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
                "-C", "--cd", "--add-dir", "-i", "--image", "--enable", "--disable", "--local-provider", "--oss"}
+OMP_VALUE = {"--model", "--smol", "--slow", "--plan", "--provider", "--api-key", "--system-prompt", "--system-prompt-template",
+             "--append-system-prompt", "--profile", "--cwd", "--mode", "--config", "--add-dir", "--session-dir", "--models",
+             "--tools", "--thinking", "--service-tier", "--hook", "-e", "--extension", "--skills", "--max-time", "--warn-cost",
+             "--max-cost", "--approval-mode", "--prewalk-into", "--plan-yolo-into", "--spinner-interval", "--max-fps", "--motion"}
 
 
 def kind_of(word):
     b = os.path.basename(str(word))
-    return b if b in ("claude", "codex") else None
+    return b if b in ("claude", "codex", "omp") else None
 
 
 def base_argv(argv):
@@ -61,7 +65,21 @@ def base_argv(argv):
     i = 0
     while i < len(rest):
         a = rest[i]
-        if kind == "claude":
+        if kind == "omp":
+            if a in ("--resume", "-r"):
+                i += 2 if i + 1 < len(rest) and not rest[i + 1].startswith("-") else 1
+                continue
+            if a in ("--restore", "--fork", "--goal") and i + 1 < len(rest):
+                i += 2
+                continue
+            if re.match(r"^--(resume|restore|fork|goal)=", a) or a in ("--continue", "-c"):
+                i += 1
+                continue
+            if a in OMP_VALUE and i + 1 < len(rest):
+                out += [a, rest[i + 1]]
+                i += 2
+                continue
+        elif kind == "claude":
             if a in ("--resume", "-r", "--session-id"):
                 i += 2 if i + 1 < len(rest) and not rest[i + 1].startswith("-") else 1
                 continue
@@ -90,11 +108,13 @@ def base_argv(argv):
     return kind, out
 
 
-def resume_argv(kind, argv, session, message=None):
-    """argv (base_argv's) resuming `session`, with a first message when given."""
+def resume_argv(kind, argv, session, message=None, log=None):
+    """argv (base_argv's) resuming `session` (omp: its log's path when given), with a first message when given."""
     tail = [message] if message else []
     if kind == "claude":
         return [*argv, "--resume", session, *tail]
+    if kind == "omp":
+        return [*argv, "--resume", log or session, *tail]
     return [argv[0], "resume", *argv[1:], session, *tail]
 
 
@@ -252,7 +272,7 @@ def plan(k, rec, running):
     if rec and rec.get("session") and rec["session"] in running:
         return ("running", None, False)
     if rec and rec.get("session") and rec.get("log") and os.path.isfile(rec["log"]):
-        return ("resume", resume_argv(rec["kind"], rec["argv"], rec["session"], CUT if rec.get("working") else None), not rec.get("shell"))
+        return ("resume", resume_argv(rec["kind"], rec["argv"], rec["session"], CUT if rec.get("working") else None, rec["log"]), not rec.get("shell"))
     # Its session is gone: a new one, with the handover (and an Assistant's role, its template's words).
     command, template = template_of() if assistant else (None, None)
     argv = (rec or {}).get("argv") or (shlex.split(command) if command else None)
