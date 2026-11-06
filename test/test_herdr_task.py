@@ -1682,8 +1682,8 @@ class ReviewAsAHelperAgent(unittest.TestCase):
         with open(os.path.join(ROOT, "templates", "worker.md")) as f:
             worker = f.read()
         for words in (templates.WORKER_MD, worker):
-            self.assertIn("--label herdr.role=reviewer", words)
-            self.assertIn("herdr.task=$HERDR_BROWSER_TASK", words)
+            self.assertIn("labelled herdr.role=reviewer", words)
+            self.assertIn("herdr.task=$HERDR_BROWSER_TASK", words)  # a helper agent's own hc run
             self.assertIn("codex --sandbox read-only --ask-for-approval never", words)
             self.assertIn("claude --permission-mode plan", words)
             self.assertIn("hc wait <its name>", words)
@@ -1833,6 +1833,192 @@ class Store:
 
     def key(self, t):
         return f"f#{t['id']}"
+
+
+class ReviewStart(unittest.TestCase):
+    """ASH-8: the worker starts its reviewer with `herdr-task review-start`. Codex gets the trust for
+    Shepherdr's own hook and the task's own worktree (never another hook or folder), and a reviewer
+    stuck on a start screen or exited is said within its first minute, with its screen's first lines.
+    In memory: hc is a fake with fake screens, the clock a fake one."""
+
+    HOOKS = "  Hooks need review\n  1 hook is new or changed\n\n› 1. Review hooks\n  2. Trust all and continue\n\n  Press enter to confirm"
+    TRUST = ("> You are in /wt\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with\n"
+             "  higher risk of prompt injection.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue")
+    MISSING = "Error: Missing environment variable: `BORABOT_GATEWAY_KEY`.\n"
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.agents as agents
+        import herdr_task.reviewer as reviewer
+        self.reviewer, self.mock = reviewer, mock
+        self.dir = tempfile.mkdtemp()
+        self.wt = os.path.join(self.dir, "wt")
+        os.makedirs(self.wt)
+        # Shepherdr's app with its chat's SessionStart note, and Codex's hooks.json naming it beside another hook.
+        self.app = os.path.join(self.dir, "herdr-app")
+        os.makedirs(os.path.join(self.app, "mods", "chat"))
+        open(os.path.join(self.app, "mods", "chat", "session-note.sh"), "w").close()
+        self.codex = os.path.join(self.dir, "codex")
+        os.makedirs(self.codex)
+        self.hooks = {"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": "sh '/elsewhere/not-ours.sh'", "timeout": 10}]},
+            {"hooks": [{"type": "command", "command": f"sh '{self.app}/mods/chat/session-note.sh'", "timeout": 10}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "node ~/.cc-cmux/handler.cjs", "timeout": 10}]}]}}
+        with open(os.path.join(self.codex, "hooks.json"), "w") as f:
+            json.dump(self.hooks, f)
+        self.store = Store([{"id": 7, "title": "Fix login", "state": "running", "mode": "worktree", "worktree": self.wt, "agents": []}])
+        self.reviewer_line = {"agent": "codex", "model": "gpt-5.5", "effort": "high"}
+        self.clock, self.ran, self.said = 1_800_000_000.0, [], []
+        self.records, self.screen, self.before = [], "", False
+
+        def get(*a):
+            if a[:1] != ("get",) or not any(x[:2] == ["hc", "run"] for x in self.ran) and not self.before:
+                return None  # no reviewer until hc run starts one (unless one runs from before)
+            return dict(self.records.pop(0) if len(self.records) > 1 else self.records[0]) if self.records else None
+
+        def run(argv, **kw):
+            self.ran.append(argv)
+            return subprocess.CompletedProcess(argv, 0, self.screen if argv[1:2] == ["read"] else "{}", "")
+
+        def sleep(n):
+            self.clock += n
+
+        clock = mock.Mock(time=lambda: self.clock, sleep=sleep)
+        for target, name, value in (
+                (reviewer, "open_store", lambda args, write=True: self.store), (reviewer, "hc_json", get), (reviewer, "run", run),
+                (agents, "run", run), (agents, "now", lambda: int(self.clock * 1000)), (reviewer, "time", clock),
+                (reviewer, "low_priority", lambda argv, name: argv), (reviewer, "own_path", lambda: "/bin/herdr-task"),
+                (reviewer, "say", lambda args, data, text: self.said.append(text)),
+                (reviewer, "task_settings", lambda s, t: [{"label": "Reviewer", "value": self.reviewer_line}])):
+            p = mock.patch.object(target, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, {"CODEX_HOME": self.codex, "HC_TERMINAL_ID": "t9"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def reviewer_term(self, **more):
+        """As hc get gives it while Codex shows its own screen: no status, turn 0, half a minute old."""
+        return {"address": "t3", "name": "shep-7-review", "state": "live", "turn": 0, "created_ms": int(self.clock * 1000) - 30_000,
+                "argv": ["sh", "-c", "low", "herdr-low", "codex", "--sandbox", "read-only"],
+                "foreground": {"name": "node", "argv": ["node", "/usr/local/bin/codex"]}, "labels": {"herdr.role": "reviewer"}, **more}
+
+    def start(self, agent=None):
+        import argparse
+        from herdr_task.base import Fail
+        self.started_at = self.clock
+        try:
+            self.reviewer.cmd_review_start(argparse.Namespace(id="SHEP-7", folder=None, json=False, prompt="Review SHEP-7",
+                                                              prompt_file=None, agent=agent))
+        except Fail as e:
+            return str(e)
+        return self.said[-1]
+
+    def hc_run(self):
+        return next(a for a in self.ran if a[:2] == ["hc", "run"])
+
+    def flag(self, argv, prefix):
+        return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "-c" and argv[i + 1].startswith(prefix)]
+
+    def test_codex_trust_hash_is_codexs_own(self):
+        from herdr_task.launch import hook_hash
+        # As Codex 0.154 wrote them into a config.toml's hooks.state on being told yes.
+        self.assertEqual(hook_hash("pre_tool_use", {"type": "command", "command": "node ~/.cc-cmux/handler.cjs", "timeout": 10}),
+                         "sha256:7014f1aa295c69a9b411a0117508411a0679f65d8f490c201d0fc2fc2eadfa15")
+        self.assertEqual(hook_hash("post_tool_use", {"type": "command", "command": "node ~/.cc-cmux/handler.cjs", "timeout": 10}),
+                         "sha256:c055bce61216378210074fd993abf85f76d879718648ff1b81d5d771ac26f1c1")
+
+    def test_only_shepherdrs_own_hook_and_the_tasks_own_worktree_are_trusted(self):
+        from herdr_task.launch import hook_hash
+        flags = self.reviewer.codex_trust(self.wt, self.wt)
+        state = self.flag(flags, "hooks.state=")
+        key = os.path.join(self.codex, "hooks.json") + ":session_start:1:0"
+        own = hook_hash("session_start", self.hooks["hooks"]["SessionStart"][1]["hooks"][0])
+        self.assertEqual(state, ["hooks.state={" + json.dumps(key) + "={trusted_hash=" + json.dumps(own) + "}}"])
+        self.assertNotIn("session_start:0:0", state[0])  # another hook: Codex and the person decide
+        self.assertNotIn("stop:", state[0])
+        self.assertEqual(self.flag(flags, "projects="), ["projects={" + json.dumps(os.path.realpath(self.wt)) + "={trust_level=\"trusted\"}}"])
+        # Any other folder: never trusted for it.
+        self.assertEqual(self.flag(self.reviewer.codex_trust(self.dir, self.wt), "projects="), [])
+        self.assertEqual(self.flag(self.reviewer.codex_trust(self.dir, None), "projects="), [])
+        # The note's file gone (not Shepherdr's app): no hook is trusted.
+        os.remove(os.path.join(self.app, "mods", "chat", "session-note.sh"))
+        self.assertEqual(self.flag(self.reviewer.codex_trust(self.wt, self.wt), "hooks.state="), [])
+
+    def test_a_started_reviewer_is_read_only_and_the_workers_child(self):
+        self.records = [self.reviewer_term(), self.reviewer_term(status={"state": "working"}, turn=1)]
+        out = self.start()
+        self.assertIn("shep-7-review (Codex, read-only) is reviewing", out)
+        self.assertIn("hc wait shep-7-review --timeout 600", out)
+        argv = self.hc_run()
+        for words in (["--name", "shep-7-review"], ["--cwd", self.wt], ["--label", "herdr.role=reviewer"], ["--label", "herdr.task=f#7"],
+                      ["--label", "herdr.agent=codex"], ["--parent", "t9"]):
+            self.assertIn(" ".join(words), " ".join(argv))
+        cmd = argv[argv.index("--") + 1:]
+        self.assertEqual(cmd[:7], ["codex", "--sandbox", "read-only", "--ask-for-approval", "never", "-m", "gpt-5.5"])
+        self.assertIn('model_reasoning_effort="high"', cmd)
+        self.assertTrue(self.flag(cmd, "hooks.state=") and self.flag(cmd, "projects="))
+        self.assertEqual(cmd[-1], "Review SHEP-7")
+        self.assertFalse([a for a in self.ran if a[1:2] in (["keys"], ["send"], ["kill"])])
+
+    def test_stuck_on_codexs_hooks_screen_it_is_said_at_once_and_ended(self):
+        self.records, self.screen = [self.reviewer_term()], self.HOOKS
+        out = self.start()
+        self.assertLess(self.clock - self.started_at, 10)  # within its first minute, not 10
+        self.assertIn("stopped on its start screen (Codex waits on its start screen)", out)
+        self.assertIn("Hooks need review", out)
+        self.assertIn("1 hook is new or changed", out)
+        self.assertIn("/bin/herdr-task review-start SHEP-7 --folder /f --agent claude", out)
+        self.assertIn(["hc", "kill", "shep-7-review"], self.ran)
+        self.assertFalse([a for a in self.ran if a[1:2] in (["keys"], ["send"])])  # never answered
+
+    def test_stuck_on_the_folder_trust_screen_it_is_never_answered(self):
+        self.records, self.screen = [self.reviewer_term()], self.TRUST
+        out = self.start()
+        self.assertIn("Codex asks to trust this folder", out)
+        self.assertIn("Do you trust the contents of this directory?", out)
+        self.assertFalse([a for a in self.ran if a[1:2] in (["keys"], ["send"])])
+
+    def test_an_exit_says_its_screens_first_lines(self):
+        self.records = [self.reviewer_term(), self.reviewer_term(state="finished", exit_code=1)]
+        self.screen = self.MISSING
+        out = self.start()
+        self.assertIn("shep-7-review (Codex) exited before its review began (exit code 1)", out)
+        self.assertIn("Missing environment variable: `BORABOT_GATEWAY_KEY`", out)
+        self.assertIn("--agent claude", out)
+        self.assertLess(self.clock - self.started_at, 10)
+
+    def test_quiet_after_a_minute_it_says_so_and_leaves_it_running(self):
+        self.records, self.screen = [self.reviewer_term()], "OpenAI Codex v0.154.0\n\n  Booting MCP servers…"
+        out = self.start()
+        self.assertIn("hasn't begun its review after 60 s and is still running", out)
+        self.assertIn("Booting MCP servers", out)
+        self.assertLessEqual(self.clock - self.started_at, self.reviewer.WATCH_S + self.reviewer.STEP_S)
+        self.assertNotIn(["hc", "kill", "shep-7-review"], self.ran)
+
+    def test_the_other_cli_starts_from_its_own_defaults(self):
+        self.records = [self.reviewer_term(status={"state": "working"}, foreground={"name": "claude"})]
+        self.start("claude")
+        cmd = self.hc_run()[self.hc_run().index("--") + 1:]
+        self.assertEqual(cmd, ["claude", "--permission-mode", "plan", "Review SHEP-7"])  # Codex's model isn't Claude's
+
+    def test_a_live_reviewer_is_not_started_twice(self):
+        self.records, self.before = [self.reviewer_term(status={"state": "working"})], True
+        self.assertIn("shep-7-review is still running", self.start())
+        self.assertFalse([a for a in self.ran if a[:2] == ["hc", "run"]])
+
+    def test_the_brief_says_how(self):
+        from herdr_task import launch, templates
+        self.assertIn("review-start", launch.OWN)  # runs without asking, as the other own verbs
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        for words in (templates.WORKER_MD, worker):
+            self.assertIn("`herdr-task review-start` command given at the end of your brief", words)
+            self.assertIn("start the other CLI read-only instead (`--agent claude`", words)
+            self.assertIn("never answer a reviewer's start screen yourself", words)
+            self.assertNotIn("-- <its command> \"<prompt>\"`, its command `codex", words)
+        self.assertIn(templates.WORKER_MD_BEFORE_REVIEW_START, templates.OLD_WORKERS)  # an unedited earlier one gets today's
 
 
 class Scheduled(unittest.TestCase):
@@ -2179,7 +2365,7 @@ class OmpAgent(unittest.TestCase):
             worker = f.read()
         for words in (templates.WORKER_MD, worker):
             self.assertIn("omp --tools read,grep,find,glob,ast_grep`", words)  # no lsp: it can apply edits
-            self.assertIn("herdr.agent=<codex, claude or omp>", words)
+        self.assertIn("herdr.agent=<codex, claude or omp>", templates.WORKER_MD_BEFORE_REVIEW_START)
         self.assertIn(templates.WORKER_MD_BEFORE_OMP, templates.OLD_WORKERS)  # an unedited earlier one gets today's
 
     def test_its_brief_says_when_omp_still_asks(self):
