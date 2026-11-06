@@ -56,6 +56,9 @@ test("omp is offered as a task agent and reviewer once it lists its models (ASH-
   expect(S.modelLabel(c.menus, { agent: "omp", model: "anthropic/claude-opus-5-5", effort: "high" })).toBe("Claude Opus 5.5 · High");
   // not installed: not offered
   expect(S.choicesFrom({ claude: {}, codex: {}, omp }, { claude: true, codex: true }).menus.omp).toBeUndefined();
+  // the Assistant's menu leaves omp out (its chat can't read omp's log); task agents and reviewers keep it
+  expect(Object.keys(S.roleMenus("coordinator", c.menus))).not.toContain("omp");
+  expect(Object.keys(S.roleMenus("worker", c.menus))).toContain("omp");
   // omp's reviewer by default: Claude Code
   expect(S.otherCli("omp")).toBe("claude");
   expect(S.roleSel("reviewer", null, c, "omp")).toMatchObject({ unset: true, sel: { agent: "claude" } });

@@ -63,16 +63,27 @@ function overrides(argv) {
 }
 
 // The agent's own settings on its machine: Claude's settings.json, Codex's config.toml and
-// model list. Read once per agent process.
+// model list, omp's model list. Read once per agent process. omp's list takes seconds to make
+// (omp models --json), so it is kept in ~/.cache/herdr/omp-models.json: a menu reads that, and one
+// older than an hour is made again in the background for the next.
 export const DEFAULTS = `
 if [ "$1" = claude ]; then
   f="$HOME/.claude/settings.json"
   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
 elif [ "$1" = omp ]; then
   if command -v omp >/dev/null 2>&1; then
-    printf 'models\\t'
-    if command -v jq >/dev/null 2>&1; then omp models --json 2>/dev/null | jq -c '[.models[] | {id: .selector, label: .name, efforts: (.thinking // [])}]' 2>/dev/null
-    else omp models --json 2>/dev/null | tr -d '\\n'; echo; fi
+    c="\${XDG_CACHE_HOME:-$HOME/.cache}/herdr/omp-models.json"
+    omp_models() {
+      if command -v jq >/dev/null 2>&1; then omp models --json 2>/dev/null | jq -c '[.models[] | {id: .selector, label: .name, efforts: (.thinking // [])}]' 2>/dev/null
+      else omp models --json 2>/dev/null | tr -d '\\n'; echo; fi
+    }
+    if [ -s "$c" ]; then
+      [ -n "$(find "$c" -mmin +60 2>/dev/null)" ] && (omp_models > "$c.$$" && [ -s "$c.$$" ] && mv "$c.$$" "$c" || rm -f "$c.$$") </dev/null >/dev/null 2>&1 &
+    else
+      mkdir -p "$(dirname "$c")" 2>/dev/null
+      omp_models > "$c.$$" && [ -s "$c.$$" ] && mv "$c.$$" "$c" || rm -f "$c.$$"
+    fi
+    [ -s "$c" ] && { printf 'models\\t'; cat "$c"; }
   fi
 else
   f="$HOME/.codex/config.toml"
@@ -102,6 +113,7 @@ export function parseDefaults(kind, stdout) {
       const d = JSON.parse(out.models);
       models = (Array.isArray(d) ? d : (d?.models ?? []).map((m) => ({ id: m.selector, label: m.name, efforts: m.thinking ?? [] })))
         .filter((m) => m?.id).map((m) => ({ id: m.id, label: m.label || m.id, efforts: (m.efforts ?? []).filter((e) => e !== "off" && e !== "auto"), fast: false, defaultEffort: null }));
+    // (a model that lists no thinking levels has none to pick: its menu shows no Reasoning)
     } catch {}
     return { model: null, effort: null, fast: false, models };
   }
@@ -186,7 +198,7 @@ export function menuFor(agent, dflt, current = null) {
     return { name: NAMES.claude, perms: PERMS.claude, models };
   }
   if (agent === "omp") {
-    const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts?.length ? m.efforts : OMP_EFFORTS, defaultEffort: null, fast: false }));
+    const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts ?? [], defaultEffort: null, fast: false }));
     if (current && !all.some((m) => m.id === current)) all.unshift({ id: current, name: current, efforts: OMP_EFFORTS, defaultEffort: null, fast: false });
     return { name: NAMES.omp, perms: PERMS.omp, models: all };
   }

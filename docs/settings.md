@@ -53,16 +53,18 @@ task values a machine set before (the old machine scope) still apply there until
 ## omp as an agent
 
 Workers and the Reviewer can run on omp (Oh My Pi, `omp` on the PATH) beside Claude Code and Codex: Settings › Agents
-lists it once `omp models --json` lists its models, and `herdr-task add|start|resume --agent omp` picks it for one task.
+lists it once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-models.json`, made again hourly), and
+`herdr-task add|start|resume --agent omp` picks it for one task. The Assistant stays on Claude Code or Codex.
 
 - **What it gets:** its model (`--model provider/id`), thinking level (`--thinking`) and approval mode
   (`--approval-mode`: Ask, Write, Full access = yolo, omp's own default) from Settings; the brief as its first
   message; its status (working, needs you, done) from omp's own OSC 7501 reports; its session found
   (`~/.omp/agent/sessions`) so `resume` and a restart after a crash continue it (`--resume <its log>`); the session
-  note as an omp extension; a read-only reviewer (`omp --tools read,grep,find,glob,ast_grep,lsp`); a Reviewer left
+  note as an omp extension; a read-only reviewer (`omp --tools read,grep,find,glob,ast_grep`: no bash, so it reads the diff its prompt
+  gives it and runs no checks); a Reviewer left
   unset runs Claude Code.
 - **What it lacks:** question, permission and plan cards (omp asks in its terminal: the task shows Needs you, answer
-  there); its own herdr-task commands always allowed (under Ask or Write omp asks for them); usage limits and a
+  there); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so); usage limits and a
   backup agent taking over; its chat read back in the chat view (its terminal shows it); the Assistant's model menu
   switching a running omp agent.
 

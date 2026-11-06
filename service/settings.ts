@@ -438,8 +438,9 @@ export class Settings {
       if (word !== null) {
         try { v = JSON.parse(word); } catch { throw new Error("Not an agent."); }
         // a model id as each CLI writes it (omp's: provider/id, as "anthropic/claude-opus-5-5")
-        const ok = (x: unknown) => x == null || (typeof x === "string" && /^[\w.\[\]:\/-]{1,120}$/.test(x));
+        const ok = (x: unknown) => x == null || (typeof x === "string" && /^[\w.\[\]:\/~-]{1,120}$/.test(x));
         if (!["claude", "codex", "omp"].includes(v?.agent) || !ok(v.model) || !ok(v.effort)) throw new Error("Pick Claude Code, Codex or omp.");
+        if (v.agent === "omp" && field === "coordinator") throw new Error("omp runs task agents and reviewers for now, not the Assistant.");
         // its permission mode, as the window's Permissions pick (one of the CLI's modes; none: the CLI's own default)
         const PERM: Record<string, string[]> = { claude: ["manual", "auto", "acceptEdits", "plan", "bypassPermissions"], codex: ["read-only", "auto", "full"],
           omp: ["always-ask", "write", "yolo"] };

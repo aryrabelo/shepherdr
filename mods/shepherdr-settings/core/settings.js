@@ -83,6 +83,10 @@ export const USE_OTHER_CLI = "Use other CLI";
 export const LOADING_AGENTS = "Loading agents…";
 // An unset Reviewer's button: what runs, the other CLI.
 export const otherCliWords = (cli) => `Other CLI (${NAMES[cli] ?? cli})`;
+// The agents a role's menu offers: omp runs task agents and reviewers, not an Assistant (the chat can't read its log yet).
+export const TASK_ONLY = ["omp"];
+export const roleMenus = (role, menus) =>
+  role === "coordinator" && menus ? Object.fromEntries(Object.entries(menus).filter(([k]) => !TASK_ONLY.includes(k))) : menus;
 // (omp's other is Claude Code, as herdr-task's other_cli)
 export const otherCli = (worker) => (worker === "codex" || worker === "omp" ? "claude" : "codex");
 // Reactions (herdr-task's reactions.py): every agent (Assistants, task workers, automation runs, agent tabs) reacts to

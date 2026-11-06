@@ -442,7 +442,7 @@ class Install(unittest.TestCase):
         run("install", "--root", self.root, "--yes")
         with open(note) as f:
             text = f.read()
-        self.assertIn(f'"{self.p(APP)}/mods/chat/session-note.sh"', text)
+        self.assertIn(f'"{os.path.realpath(self.p(APP))}/mods/chat/session-note.sh"', text)
         self.assertNotIn("{app}", text)
         run("install", "--root", self.root, "--yes")  # again: the same, left as it is
         run("uninstall", "--root", self.root)

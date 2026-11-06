@@ -339,6 +339,8 @@ def closing_line(s, task, parent=None, argv=None):
                  "(then end your turn), `herdr-secret run NAME -- <command>`, `herdr-secret list`; these run without asking too.")
     if argv and agent_key(argv) == "codex":
         text += " Codex's sandbox can't reach Herdr, so give those commands sandbox_permissions \"require_escalated\" from the first try."
+    if argv and agent_key(argv) == "omp" and any(m in argv for m in ("always-ask", "always-ask-cached", "write")):
+        text += " (omp: your approval mode still asks before each of them.)"
     # No "report to your coordinator": Herdr tells the Assistant itself (news_pass).
     return text
 

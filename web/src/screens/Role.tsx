@@ -64,7 +64,7 @@ export function ModelButton({ row, level }: { row: SettingRow; level: string }) 
         <span className="truncate">{row.value}</span>
         <DownIcon className={clsx(ic, 'size-3.5')} />
       </button>
-      {open && sel ? <ModelMenu start={sel} up={up} onClose={() => setOpen(false)} save={(next) => act({ type: 'setting', key: row.key, value: JSON.stringify(next), place: level } as never)} /> : null}
+      {open && sel ? <ModelMenu role={row.agent?.role ?? ''} start={sel} up={up} onClose={() => setOpen(false)} save={(next) => act({ type: 'setting', key: row.key, value: JSON.stringify(next), place: level } as never)} /> : null}
     </span>
   )
 }
@@ -72,14 +72,15 @@ export function ModelButton({ row, level }: { row: SettingRow; level: string }) 
 /** the window's model menu in settings mode: the model list as the chat's (restart.tsx ModelList: agent tabs,
  *  search, pinned and recent; picking another CLI's switches agent), Reasoning (that model's levels), Fast (where the model has it), Permissions (a small list); no Restart, each change
  *  saved as it is made */
-function ModelMenu({ start, up, onClose, save }: { start: AgentPick; up: boolean; onClose: () => void; save: (sel: AgentPick) => Promise<any> }) {
+function ModelMenu({ role, start, up, onClose, save }: { role: string; start: AgentPick; up: boolean; onClose: () => void; save: (sel: AgentPick) => Promise<any> }) {
   const [data, setData] = useState<ModelMenus | null>(null)
   const [sel, setSel] = useState<AgentPick>(start)
   const [perms, setPerms] = useState(false)
   const [error, setError] = useState('')
   const [picks, setPicks] = useState<{ pinned: string[]; recent: string[] } | undefined>()
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  useEffect(() => { void menusNow().then((m) => (m ? (setData(m), setPicks(m.picks)) : setError('Could not read the agents.'))) }, [])
+  // omp only for task agents and reviewers (core/settings.js roleMenus)
+  useEffect(() => { void menusNow().then((m) => (m ? (setData({ ...m, menus: ST.roleMenus(role, m.menus) }), setPicks(m.picks)) : setError('Could not read the agents.'))) }, [role])
   const change = (next: AgentPick) => {
     setSel(next)
     setError('')

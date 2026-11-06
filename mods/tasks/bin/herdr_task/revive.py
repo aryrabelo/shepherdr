@@ -43,7 +43,7 @@ CLAUDE_VALUE = {"--add-dir", "--mcp-config", "--append-system-prompt", "--system
                 "--model", "--effort", "--settings", "--permission-mode"}
 CODEX_VALUE = {"-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
                "-C", "--cd", "--add-dir", "-i", "--image", "--enable", "--disable", "--local-provider", "--oss"}
-OMP_VALUE = {"--model", "--smol", "--slow", "--plan", "--provider", "--api-key", "--system-prompt", "--system-prompt-template",
+OMP_VALUE = {"--alias", "--model", "--smol", "--slow", "--plan", "--provider", "--api-key", "--system-prompt", "--system-prompt-template",
              "--append-system-prompt", "--profile", "--cwd", "--mode", "--config", "--add-dir", "--session-dir", "--models",
              "--tools", "--thinking", "--service-tier", "--hook", "-e", "--extension", "--skills", "--max-time", "--warn-cost",
              "--max-cost", "--approval-mode", "--prewalk-into", "--plan-yolo-into", "--spinner-interval", "--max-fps", "--motion"}

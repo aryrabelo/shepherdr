@@ -86,11 +86,12 @@ WORKER_MD_BEFORE_FEEDBACK = WORKER_MD_BEFORE_SUBAGENTS.replace(SUBAGENTS_OLD, SU
 # Since agents offer feedback for Shepherdr itself through their Assistant (SHEP-78).
 FEEDBACK_RULE = ("- Shepherdr itself misbehaving, not your task's own code (a Shepherdr, herdr-task, web app or window feature that doesn't work as meant, a Herdr command failing like a bug, the person frustrated with Shepherdr, or a \"Shepherdr feedback:\" line in your reviewer's findings): run the `herdr-task feedback` command given at the end of your brief, once per problem, then carry on. It returns at once and your Assistant asks the person whether to file it; never file an issue yourself, and put no secrets, private paths or whole logs in it.\n")
 WORKER_MD_BEFORE_OMP = WORKER_MD_BEFORE_FEEDBACK + FEEDBACK_RULE
-# Since omp is a task agent and reviewer too (ASH-2): its reviewer gets only omp's read-only tools.
+# Since omp is a task agent and reviewer too (ASH-2): its reviewer gets only omp's read-only tools (not lsp,
+# which can apply edits, nor bash): it reads the diff in its prompt.
 OMP_OLD = ("--label herdr.agent=<codex or claude> -- <its command> \"<prompt>\"`, its command `codex --sandbox read-only "
            "--ask-for-approval never` or `claude --permission-mode plan` (never")
 OMP_RULE = ("--label herdr.agent=<codex, claude or omp> -- <its command> \"<prompt>\"`, its command `codex --sandbox read-only "
-            "--ask-for-approval never`, `claude --permission-mode plan` or `omp --tools read,grep,find,glob,ast_grep,lsp` (never")
+            "--ask-for-approval never`, `claude --permission-mode plan` or `omp --tools read,grep,find,glob,ast_grep` (never")
 WORKER_MD = WORKER_MD_BEFORE_OMP.replace(OMP_OLD, OMP_RULE)
 
 REVIEWER_MD_BEFORE_SUBAGENT = """You review one Herdr task's work before it can merge. Read only: never edit files, commit or push.

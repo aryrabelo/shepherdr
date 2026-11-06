@@ -78,7 +78,7 @@ test("omp: its models from `omp models --json`, its levels, its argv (ASH-2)", (
     expect(m.name).toBe("omp");
     expect(m.perms.map((p) => p.id)).toEqual(["always-ask", "write", "yolo"]);
     expect(m.models[0]).toMatchObject({ id: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", efforts: ["low", "high"] });
-    expect(m.models[1].efforts.length).toBeGreaterThan(0); // one that lists none gets omp's levels
+    expect(m.models[1].efforts).toEqual([]); // one that lists no thinking levels offers none
     const c = current("omp", ["omp", "--model", "anthropic/claude-opus-5-5", "--thinking", "high", "--approval-mode", "write"], {}, d);
     expect(c).toMatchObject({ agent: "omp", effort: "high", perm: "write" });
     expect(line(c)).toBe("omp · Claude Opus 5.5 · High");
@@ -86,4 +86,21 @@ test("omp: its models from `omp models --json`, its levels, its argv (ASH-2)", (
   expect(parseDefaults("omp", "").models).toBeNull(); // omp not here
   expect(argvFor({ agent: "omp", model: "zai/glm-5", effort: "low", perm: "yolo" }, { agent: "claude", argv: ["claude"] }).argv)
     .toEqual(["omp", "--model", "zai/glm-5", "--thinking", "low", "--approval-mode", "yolo"]);
+});
+
+test("omp's model list is kept: a second read doesn't run omp again (ASH-2 review)", async () => {
+  const { DEFAULTS } = await import("./agents.js");
+  const { mkdtempSync, chmodSync, readFileSync, existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "omp-cache-")), bin = join(dir, "bin"), runs = join(dir, "runs");
+  await Bun.write(join(bin, "omp"), `#!/bin/sh\necho x >> "${runs}"\necho '{"models":[{"selector":"a/b","name":"B","thinking":["low"]}]}'\n`);
+  chmodSync(join(bin, "omp"), 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CACHE_HOME: join(dir, "cache") };
+  for (let i = 0; i < 2; i++) {
+    const p = Bun.spawnSync(["sh", "-c", DEFAULTS, "defaults", "omp"], { env });
+    expect(parseDefaults("omp", p.stdout.toString()).models).toEqual([{ id: "a/b", label: "B", efforts: ["low"], fast: false, defaultEffort: null }]);
+  }
+  expect(readFileSync(runs, "utf8").trim().split("\n").length).toBe(1);
+  expect(existsSync(join(dir, "cache", "herdr", "omp-models.json"))).toBe(true);
 });

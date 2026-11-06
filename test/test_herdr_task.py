@@ -1839,9 +1839,9 @@ class OmpAgent(unittest.TestCase):
 
     def test_revive_starts_it_again_on_its_session(self):
         import herdr_task.revive as revive
-        kind, argv = revive.base_argv(["env", "X=1", "/home/me/.local/bin/omp", "--model", "m", "--thinking", "high",
+        kind, argv = revive.base_argv(["env", "X=1", "/home/me/.local/bin/omp", "--model", "m", "--thinking", "high", "--alias", "w",
                                        "--resume", "/old.jsonl", "-c", "You work on one Herdr task."])
-        self.assertEqual((kind, argv), ("omp", ["/home/me/.local/bin/omp", "--model", "m", "--thinking", "high"]))
+        self.assertEqual((kind, argv), ("omp", ["/home/me/.local/bin/omp", "--model", "m", "--thinking", "high", "--alias", "w"]))
         self.assertEqual(revive.resume_argv("omp", ["omp", "--model", "m"], self.sid, revive.CUT, "/l.jsonl"),
                          ["omp", "--model", "m", "--resume", "/l.jsonl", revive.CUT])
         self.assertEqual(revive.resume_argv("omp", ["omp"], self.sid), ["omp", "--resume", self.sid])
@@ -1898,9 +1898,23 @@ class OmpAgent(unittest.TestCase):
         with open(os.path.join(ROOT, "templates", "worker.md")) as f:
             worker = f.read()
         for words in (templates.WORKER_MD, worker):
-            self.assertIn("omp --tools read,grep,find,glob,ast_grep,lsp", words)
+            self.assertIn("omp --tools read,grep,find,glob,ast_grep`", words)  # no lsp: it can apply edits
             self.assertIn("herdr.agent=<codex, claude or omp>", words)
         self.assertIn(templates.WORKER_MD_BEFORE_OMP, templates.OLD_WORKERS)  # an unedited earlier one gets today's
+
+    def test_its_brief_says_when_omp_still_asks(self):
+        from unittest import mock
+        import herdr_task.launch as launch
+
+        class S:
+            loc = {"folder": "/repo"}
+            def ref(self, t): return "OT-1"
+        with mock.patch.object(launch, "review_limits", return_value=(False, 0)), \
+                mock.patch("herdr_task.feedback.feedback_on", return_value=False):
+            asks = launch.closing_line(S(), {"id": 1}, argv=["omp", "--approval-mode", "write"])
+            free = launch.closing_line(S(), {"id": 1}, argv=["omp"])
+        self.assertIn("approval mode still asks", asks)
+        self.assertNotIn("approval mode still asks", free)
 
     def test_the_session_note_extension(self):
         with open(os.path.join(ROOT, "mods", "chat", "omp-session-note.ts")) as f:
