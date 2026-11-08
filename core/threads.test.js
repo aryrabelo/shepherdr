@@ -99,6 +99,11 @@ describe("agents of a space's own (not its Assistant, nor a task's)", () => {
     expect(isLooseAgent(k({}, { state: "working" }))).toBe(true);
     expect(isLooseAgent(k({}, null))).toBe(false);
     expect(isLooseAgent(k(), "t9")).toBe(false);
+    // an agent without hooks (an omp) reports no status: Herdr knows its program; a shell in front is none
+    expect(isLooseAgent(k({}, null, { program: { agent: "omp", name: "omp" } }))).toBe(true);
+    expect(isLooseAgent(k({}, null, { agent: "omp" }))).toBe(true);
+    expect(isLooseAgent(k({}, null, { agent: "zsh" }))).toBe(false);
+    expect(isLooseAgent(k({}, null, { program: { shell: true, name: "zsh" } }))).toBe(false);
     expect(isLooseAgent(k({ "herdr.role": "coordinator" }))).toBe(false);
     expect(isLooseAgent(k({ "herdr.task": "app#1" }))).toBe(false);
     expect(isLooseAgent(k({ "herdr.role": "reviewer" }))).toBe(false);

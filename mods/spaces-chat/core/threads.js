@@ -26,11 +26,14 @@ export function taskActivity(task, liveAt = 0) {
   return Math.max(0, ...t.map(Number).filter(Number.isFinite));
 }
 
-// An agent opened in one of a space's tabs is a thread of its own: live, an agent (it reports a status: a shell has
-// none), not the space's Assistant (assistant: its address), and neither a task's agent (those are their task's thread)
-// nor another agent's helper (a reviewer, a second opinion: its parent's). k: its terminal.
+// An agent opened in one of a space's tabs is a thread of its own: live, an agent (it reports a status, or Herdr knows
+// its program as an agent: one without hooks, an omp, reports none; a shell is neither), not the space's Assistant
+// (assistant: its address), and neither a task's agent (those are their task's thread) nor another agent's helper (a
+// reviewer, a second opinion: its parent's). k: its terminal (the window's terminals() or hc's record).
+const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$/;
+const isAgent = (k) => Boolean(wordOf(k) || k.program?.agent || (typeof k.agent === "string" && k.agent && !SHELL.test(k.agent)));
 export function isLooseAgent(k, assistant = null) {
-  if (!k || k.state !== "live" || k.address === assistant || !wordOf(k)) return false;
+  if (!k || k.state !== "live" || k.address === assistant || k.program?.shell || !isAgent(k)) return false;
   const role = k.labels?.["herdr.role"];
   return !k.labels?.["herdr.task"] && role !== "coordinator" && role !== "reviewer" && role !== "helper";
 }
