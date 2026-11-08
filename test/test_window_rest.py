@@ -17,12 +17,15 @@ def read(*p):
         return f.read()
 
 
-# lib/rest.js with its imports swapped for fakes: exec records each herdr-task call and answers from `answers`.
+# lib/rest.js with its imports swapped for fakes: exec records each herdr-task call and answers from `answers`; the
+# at-once marks are core/settle.js's own (CORE).
 HARNESS = r"""
 const calls = [], toasts = [], store = {};
 const answers = { settle: { ok: true, settled: ["t1"], at: 1, was_snoozed: { t1: Date.now() + 3600000 } },
   unsettle: { ok: true }, snooze: { ok: true, until: 2, when: "Tomorrow 9:00" }, wake: { ok: true } };
-const exec = async (cmd, args) => { calls.push(args); const verb = args.find((a) => answers[a]); return { code: 0, stdout: JSON.stringify(answers[verb]) }; };
+const exec = async (cmd, args) => { calls.push(args); const verb = args.find((a) => answers[a]);
+  if (answers[verb] === "refuse") return { code: 1, stdout: JSON.stringify({ error: "No." }) };
+  return { code: 0, stdout: JSON.stringify(answers[verb]) }; };
 const appHome = () => "/app";
 const shared = (k) => store[k];
 const setShared = (k, v) => { store[k] = v; };
@@ -30,6 +33,7 @@ const toast = (n) => toasts.push(n);
 const plainError = (e) => String(e?.message ?? e);
 const REST = { settledToast: (w) => ({ title: `Settled ${w}`, body: "Click to undo." }),
   snoozedToast: (w, when) => ({ title: `Snoozed ${w}`, body: `Wakes ${when}. Click to undo.` }) };
+CORE
 SOURCE
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const out = {};
@@ -41,6 +45,8 @@ await settle({ machine: "vm", folder: "/w", ref: "HERD-3" }, "HERD-3", { pin: "v
 await tick();
 out.pinsAfterSettle = store["tasks.pinned"];
 out.toast = toasts[0];
+// the row moved at once (ASH-14): a settled mark by its key, before and after herdr-task answered
+out.markAfterSettle = store["tasks.restnow"]?.["task:vm:/w:HERD-3"]?.rest ?? null;
 undoRest(Number(toasts[0].action.name.split("undo-rest-")[1]));
 await tick();
 out.pinsAfterUndo = store["tasks.pinned"];
@@ -52,6 +58,12 @@ out.snoozeToast = toasts[1];
 undoRest(Number(toasts[1].action.name.split("undo-rest-")[1]));
 await tick();
 out.lastCall = calls[calls.length - 1];
+out.markAfterSnoozeUndo = "agent:t7" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t7"].rest : "none";
+// a refusal takes the mark back
+answers.settle = "refuse";
+await settle({ agent: "t9" }, "t9").catch(() => {});
+await tick();
+out.markAfterRefusal = "agent:t9" in (store["tasks.restnow"] ?? {});
 console.log(JSON.stringify(out));
 """
 
@@ -61,7 +73,8 @@ class WindowRest(unittest.TestCase):
     def test_rest_runs_herdr_task_and_undoes(self):
         src = read("lib", "rest.js")
         src = re.sub(r'^import .*?;\n', "", src, flags=re.M | re.S)
-        script = HARNESS.replace("SOURCE", src)
+        core = f'import {{ PENDING, restKey, restMark, marksWith }} from "file://{J("core", "settle.js")}";'
+        script = HARNESS.replace("CORE", core).replace("SOURCE", src)
         r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
@@ -83,6 +96,11 @@ class WindowRest(unittest.TestCase):
         self.assertEqual(out["snoozeToast"]["title"], "Snoozed the Assistant")
         self.assertIn("Tomorrow 9:00", out["snoozeToast"]["body"])
         self.assertEqual(out["lastCall"], ["wake", "--agent", "t7", "--json"])
+        # ASH-14: each verb marks its row at once (shared "tasks.restnow"); a wake's mark is "awake" (null); a refusal
+        # takes it back
+        self.assertEqual(out["markAfterSettle"], "settled")
+        self.assertIsNone(out["markAfterSnoozeUndo"])
+        self.assertFalse(out["markAfterRefusal"])
 
     def test_window_wiring(self):
         """Every surface goes through rest.js and core's lists; what counts as news leaves rest out."""
@@ -97,8 +115,16 @@ class WindowRest(unittest.TestCase):
             self.assertIn(n, chat)
         self.assertIn('c.startsWith("undo-rest-")', read("mods", "tabs-tasks", "main.js"))
         tasks = read("mods", "tasks", "main.js")
-        for n in ("restFields(k)", "REST.snoozed", "REST.settled", '"settled:open"', "rest: pin.rest"):
+        for n in ("REST.snoozed", "REST.settled", '"settled:open"', "openRowMenu(pin)", "taskCan("):
             self.assertIn(n, tasks)
+        # a task live, its marks and its menus: lib/taskthread.js, the Tasks panel's and the sidebar's threads' (ASH-14)
+        thread = read("lib", "taskthread.js")
+        for n in ("restFields(k)", "rest: pin.rest", "shownRest", 'menu: "rest"'):
+            self.assertIn(n, thread)
+        self.assertRegex(read("lib", "COPIES"), r"(?m)^taskthread\.js: .*\bspaces-chat\b")
+        sidebar = read("mods", "spaces-chat", "threads.js")
+        for n in ("threadsOf", "openRestMenu", "taskCan(", "settledOpenKey"):
+            self.assertIn(n, sidebar)
         self.assertIn("notNews", read("lib", "inbox.js"))
         self.assertIn("notNews", read("lib", "parked.js"))
         self.assertIn("taskRest", read("mods", "jump", "main.js"))
