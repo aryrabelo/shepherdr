@@ -406,6 +406,29 @@ def last_words(task, address=None):
     return REASONS["reply"]
 
 
+# ---- the Próximo line (ASH-13, aryrabelo/hq's threads) --------------------------------------------------------
+# Every answer of an agent working the hq way ends with "Próximo: Y (parei em X; quem deve: Z)", or, waiting on
+# something outside, "Soneca até dd/mm: motivo. Ao acordar: X". The latest one it wrote is the task's second line in
+# the Tasks list (core/tasks.js secondLine), kept on the task by the scheduler (news_pass: task["next"]).
+NEXT_LINE = re.compile(r"^(?:Pr[óo]ximo\s*:|Soneca at[ée]\b)", re.I)
+NEXT_MAX = 200
+
+
+def next_line(task, address=None):
+    """The latest Próximo: (or Soneca até) line the task's agent wrote, markdown stripped; None when it never did."""
+    for d in reversed(log_tail(agent_log(task, address), 65536)):
+        text = said(d)
+        if not text:
+            continue
+        text = re.sub(r"```.*?(```|$)", "", text, flags=re.S)
+        for ln in reversed(text.split("\n")):
+            ln = re.sub(r"[*_`]", "", ln).strip(" >-#|\t")
+            if NEXT_LINE.match(ln):
+                ln = re.sub(r"\s+", " ", ln)
+                return ln if len(ln) <= NEXT_MAX else ln[:NEXT_MAX - 1].rstrip() + "…"
+    return None
+
+
 def permission_words(tool, value, cwd=None):
     """What a permission is for, as the chat's card says it (mods/chat/asks.js words()): "Run:
     npm test", "Edit mods/chat/main.js", "Fetch github.com"; None for a tool it can't name."""

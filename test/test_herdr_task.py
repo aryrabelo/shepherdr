@@ -4101,3 +4101,44 @@ class SettleAndSnooze(unittest.TestCase):
         self.term("t6", turn=1, status="working", parent="t5", **{"herdr.task": "x#1"})
         self.rest.rest_pass({})
         self.assertIn("settled", self.labels("t5"))
+
+
+class NextLine(unittest.TestCase):
+    """ASH-13 (aryrabelo/hq's threads): the latest "Próximo:" or "Soneca até" line a task's agent wrote is kept on the
+    task (task["next"]) for the Tasks list's second line; markdown stripped, older answers looked at too."""
+
+    def setUp(self):
+        sys.path.insert(0, BIN)
+        from herdr_task import agents
+        self.agents = agents
+        self.dir = tempfile.mkdtemp()
+
+    def task(self, *lines):
+        log = os.path.join(self.dir, "log.jsonl")
+        with open(log, "w") as f:
+            for who, text in lines:
+                if who == "me":
+                    f.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+                elif who == "codex":
+                    f.write(json.dumps({"type": "response_item", "payload": {"role": "assistant", "content": [{"type": "output_text", "text": text}]}}) + "\n")
+                else:
+                    f.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n")
+        return {"agents": [{"address": "t1", "log": log}]}
+
+    def test_the_latest_next_line(self):
+        t = self.task(("it", "Done.\n\nPróximo: abrir o PR (parei em testes; quem deve: eu)"),
+                      ("me", "ok"), ("it", "Merged the fix.\n**Próximo:** esperar o CI (parei em push; quem deve: CI)"))
+        self.assertEqual(self.agents.next_line(t), "Próximo: esperar o CI (parei em push; quem deve: CI)")
+
+    def test_an_answer_without_one_looks_further_back(self):
+        t = self.task(("it", "Próximo: revisar (parei em X; quem deve: Ary)"), ("me", "e aí?"), ("it", "Still on it."))
+        self.assertEqual(self.agents.next_line(t), "Próximo: revisar (parei em X; quem deve: Ary)")
+
+    def test_a_snooze_line_counts_and_codex_too(self):
+        t = self.task(("codex", "Esperando o deploy.\nSoneca até 10/11: deploy do cliente. Ao acordar: conferir"))
+        self.assertEqual(self.agents.next_line(t), "Soneca até 10/11: deploy do cliente. Ao acordar: conferir")
+
+    def test_none_when_it_never_wrote_one_or_only_in_code(self):
+        self.assertIsNone(self.agents.next_line(self.task(("it", "All good."))))
+        self.assertIsNone(self.agents.next_line(self.task(("it", "```\nPróximo: not this\n```"))))
+        self.assertIsNone(self.agents.next_line({"agents": []}))

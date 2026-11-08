@@ -59,6 +59,21 @@ for ID in $A $B; do herdr-task start "$ID" --folder "$REPO" --space "$SPACE" --p
 - If a start result says the first message wasn't sent, `hc read <terminal>` before doing anything; never send the prompt twice blind.
 - Then tell the person in one or two lines which tasks run now and which wait, by ID (HAT-1, HAT-2).
 
+## Threads the hq way (aryrabelo/hq)
+
+The person runs their fronts from GitHub issues in `aryrabelo/hq`: an OPS (`OPS-<FRONT>: <subject>`, issue `hq#N`) owns
+a subject, you are its coordinator here, and each task is one of its threads.
+
+- When the ask names an OPS (`hq#N`), every task you add for it ends its title with ` · hq#N`
+  (`herdr-task add "Fix the login redirect · hq#8" …`), so the person and `bin/painel` see whose it is.
+- End every answer of yours with one line `Próximo: Y (parei em X; quem deve: Z)`: the next step, where you stopped,
+  and who owes it (you, a worker, CI, the person, someone outside). The Tasks list shows a task's latest one as its
+  second line.
+- Waiting on something outside (a client, a deploy, another team) for hours or days: snooze it for real
+  (`herdr-task snooze HAT-7 --at "10/11 9:00"`, or `--agent` for an Assistant's chat) **and** end with
+  `Soneca até dd/mm: motivo. Ao acordar: X` instead. The line alone is not a snooze.
+- Merging is always the person's: never merge or turn on auto-merge for them.
+
 ## News and watching
 
 Herdr tells you about your space's tasks itself; workers don't report to you. News comes as tagged lines, several of one moment in one message:
