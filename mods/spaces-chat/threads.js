@@ -3,14 +3,14 @@
 // isn't its Assistant, a task's agent or a helper). Then its Snoozed shelf, and its Settled one folded to "3 settled"
 // until a click opens it (remembered per space). Only at full width: the rail shows none.
 // Every machine's task lists are read as the Tasks panel reads them (mods/tasks): this computer's again whenever
-// ~/.herdr/tasks changes, another machine's every 10 s. A task is placed, opened and put away as its Tasks row is
-// (taskthread.js: a click opens its chat in the Tasks panel, a right-click the row's menu); an agent goes to its terminal
-// (inbox.js toAgent), a right-click opens its Snooze menu. A row settled, snoozed, woken or unsettled moves at once (the
-// window's marks: taskthread.js).
+// ~/.herdr/tasks changes, another machine's every 10 s. A task is placed and opened as its Tasks row is (taskthread.js:
+// a click opens its chat in the Tasks panel); an agent goes to its terminal (inbox.js toAgent). A right-click opens a
+// thread's Snooze menu (core/menus.js restMenu, as the web's thread rows): Settle or Unsettle, Snooze, Wake. A row
+// settled, snoozed, woken or unsettled moves at once (the window's marks: taskthread.js).
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { machines, exec, watchFolder, home, shared } from "herdr";
+import { machines, exec, watchFolder, home } from "herdr";
 import { spaces, panes, agents, terminals } from "./live.js";
 import { taskDot, ownProgress } from "./dot.js";
 import { toAgent, fit } from "./inbox.js";
@@ -19,7 +19,7 @@ import { machineOf, autoPrefix, refOf, taskKey, reportOf, secondLine, capital } 
 import { isThread, isLooseAgent, agentSection, agentLine, taskActivity, threadHome, threadsOf, SHELF, settledOpenKey } from "./core/threads.js";
 import { SETTLED, agentRest, taskCan, restKey, wordOf } from "./core/settle.js";
 import { assistantOf } from "./core/spaces.js";
-import { placeTask, marked, dropSpent, queueNote, taskTarget, openRowMenu, openRestMenu } from "./taskthread.js";
+import { placeTask, marked, dropSpent, queueNote, taskTarget, openRestMenu } from "./taskthread.js";
 import { TEXT, RADIUS } from "./ui.js";
 
 // Under the space's name: its row's 8, the # column's 18 and the 9 between.
@@ -194,10 +194,10 @@ export class Threads {
       sub = secondLine(p, w, section === "queued" ? queueNote(list, task, f) : null);
       go = taskTarget(p, f);
       selected = live.some((a) => shown.get(a.address)?.focused);
-      const key = taskKey(list, task), can = taskCan(section, live), pins = shared("tasks.pinned");
-      menu = () => openRowMenu({ key, on: Array.isArray(pins) && pins.includes(key), status: section, machine: list.machine ?? null,
-        folder: list.folder, ref: refOf(list, task), sub: section === "scheduled" ? sub : null,
-        rest: { can: can.snooze, settle: can.settle, rest: p.rest, snoozed: Boolean(p.restInfo?.until || p.restInfo?.woke) } });
+      // its Snooze menu (as the web's thread rows): Settle or Unsettle (a stopped one too), Snooze with a live agent, Wake
+      const can = taskCan(section, live);
+      menu = () => openRestMenu({ task: { machine: list.machine ?? null, folder: list.folder, ref: refOf(list, task) }, pin: taskKey(list, task),
+        what: refOf(list, task), rest: p.rest === SETTLED ? SETTLED : null, snoozed: Boolean(p.restInfo?.until || p.restInfo?.woke), snooze: can.snooze });
     } else {
       const { k, word } = x;
       dot = taskDot(x.rest ?? x.section, { pct: x.section === "working" ? ownProgress([k.address])?.pct : null });

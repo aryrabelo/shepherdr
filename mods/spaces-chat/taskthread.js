@@ -2,8 +2,9 @@
 // sidebar's threads under each space (mods/spaces-chat, ASH-14) read and open tasks the same way.
 // - its live agents and its worker's helpers (liveOf, helpersOf), its place (core/tasks.js place()) with the rows put
 //   away or back a moment ago (placeTask: core/settle.js shownRest over shared "tasks.restnow", lib/rest.js writes it);
-// - a click opens its chat in the Tasks panel (taskTarget, openThread), a right-click the row menu (openRowMenu: Pin,
-//   Start later, Settle and Snooze; mods/tasks-menu "row"); an agent of its own the Snooze menu (openRestMenu: "rest").
+// - a click opens its chat in the Tasks panel (taskTarget, openThread), a right-click the Tasks row's menu (openRowMenu:
+//   Pin, Start later, Settle and Snooze; mods/tasks-menu "row"); a thread in the sidebar the Snooze menu (openRestMenu:
+//   "rest", as the web's thread rows), a task's or an agent of its own's.
 // f: the caller's cache for one render ({}: none), so each list is read once a render, not once a row.
 // Shared: the source is lib/taskthread.js; bin/sync-shared copies it into each mod in lib/COPIES.
 // Edit lib/taskthread.js, never a mod's copy, then run bin/sync-shared.
@@ -152,10 +153,11 @@ export function openRowMenu(pin) {
     status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, rest: pin.rest } });
 }
 
-// An agent of its own's Snooze menu (mods/tasks-menu "rest", core/menus.js restMenu), as an Assistant's header opens it:
-// Settle or Unsettle, Snooze's times, Wake. agent: its address; what: its name in the toasts.
-export function openRestMenu({ agent, what, rest = null, snoozed = false }) {
-  const items = restMenu({ rest, snoozed }).filter((x) => !x.typed);
+// A thread's Snooze menu (mods/tasks-menu "rest", core/menus.js restMenu), as an Assistant's header opens it: Settle or
+// Unsettle, Snooze's times (snooze: false, a task with no live agent: none), Wake. An agent (agent: its address) or a
+// task (task: { machine, folder, ref }, pin: its key in the Tasks panel's pins); what: its name in the toasts.
+export function openRestMenu({ agent = null, task = null, pin = null, what, rest = null, snoozed = false, snooze = true }) {
+  const items = restMenu({ rest, snoozed, snooze }).filter((x) => !x.typed);
   openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height: menuHeight(items),
-    props: { menu: "rest", agent, what, rest, snoozed } });
+    props: { menu: "rest", agent, ...(task ?? {}), pin, what, rest, snoozed, snooze } });
 }
