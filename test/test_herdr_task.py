@@ -667,7 +667,8 @@ class SchedulerRound(unittest.TestCase):
                    mock.patch.object(au, "store_files", lambda *a: []), mock.patch.object(ap, "autopilot_pass", ran.append),
                    mock.patch.object(home, "home_pass", lambda r: None)]
         patches += [mock.patch.object(au, n, lambda *a, **k: None) for n in (
-            "retry_pass", "archive_pass", "news_pass", "end_done_pass", "memory_guard", "backup_pass", "cli_check_pass", "machines_pass")]
+            "retry_pass", "archive_pass", "news_pass", "end_done_pass", "memory_guard", "backup_pass", "cli_check_pass", "machines_pass",
+            "rest_pass")]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -3870,3 +3871,233 @@ class SettleRules(unittest.TestCase):
         self.assertEqual(s.task_rest({}, [dict(nap, status="blocked")], [], self.NOW)["showing"], True)
         self.assertEqual(s.task_rest({}, [nap], [], self.NOW + 3600_001), {"rest": None, "woke": self.NOW + 3600_000})
         self.assertIsNone(s.task_rest({}, [], [], self.NOW))
+
+
+class SettleAndSnooze(unittest.TestCase):
+    """ASH-12: herdr-task settle, unsettle, snooze and wake label a task's live workers (never its reviewer) or one
+    terminal (--agent); list --json carries rest; a settled task isn't news (no needs-you line, automation event or
+    alert); the scheduler's round clears a stale settle or snooze. A real task list in a throwaway store; hc is a
+    fake (its terminals are dicts, hc label writes them), nothing else runs."""
+
+    NOW = 1_800_000_000_000
+
+    def setUp(self):
+        import argparse
+        import contextlib
+        import io
+        import shutil
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.agents as agents
+        import herdr_task.automations as au
+        import herdr_task.commands as commands
+        import herdr_task.launch as launch
+        import herdr_task.news as news
+        import herdr_task.rest as rest
+        import herdr_task.settings as settings
+        import herdr_task.store as store
+        from herdr_task.base import Fail
+        self.agents, self.au, self.commands, self.news, self.rest, self.store_mod, self.Fail = agents, au, commands, news, rest, store, Fail
+        self.argparse, self.io, self.redirect, self.mock = argparse, io, contextlib.redirect_stdout, mock
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.folder = os.path.join(self.tmp, "app")
+        os.makedirs(self.folder)
+        self.terms, self.ran, self.sent, self.clock = {}, [], [], self.NOW
+
+        def hc_json(*a):
+            if a[0] == "ls":
+                want = a[a.index("--label") + 1].split("=", 1) if "--label" in a else None
+                hits = [k for k in self.terms.values() if not want or k["labels"].get(want[0]) == want[1]]
+                # as hc ls: no labels
+                return {"terminals": [{x: v for x, v in k.items() if x != "labels"} for k in hits]}
+            k = self.terms.get(a[1]) if a[0] == "get" else None
+            return json.loads(json.dumps(k)) if k else None
+
+        def run(argv, **kw):
+            self.ran.append(argv)
+            if argv[:2] == ["hc", "label"]:
+                for kv in argv[3:]:
+                    name, _, v = kv.partition("=")
+                    if v:
+                        self.terms[argv[2]]["labels"][name] = v
+                    else:
+                        self.terms[argv[2]]["labels"].pop(name, None)
+                return subprocess.CompletedProcess(argv, 0, "{}", "")
+            raise AssertionError(f"ran {argv}")
+
+        clock = lambda: self.clock
+        for target, name, value in (
+                (store, "STORE", os.path.join(self.tmp, "tasks")), (settings, "SETTINGS", os.path.join(self.tmp, "settings.json")),
+                (news, "NEWS", os.path.join(self.tmp, "tasks", ".news.json")), (au, "SEEN", os.path.join(self.tmp, "tasks", ".seen.json")),
+                (agents, "hc_json", hc_json), (agents, "run", run), (rest, "hc_json", hc_json), (rest, "run", run),
+                (news, "hc_json", hc_json), (news, "run", run), (launch, "hc_json", hc_json), (commands, "run", run),
+                (agents, "now", clock), (rest, "now", clock), (news, "now", clock), (commands, "now", clock), (au, "now", clock),
+                (news, "coordinator_in", lambda space: "t0"), (news, "NEWS_SETTLE_MS", 0),
+                (news, "news_send", lambda to, text: self.sent.append(text) or True),
+                (news, "held_pass", lambda report: None), (news, "news_read", lambda quiet: None)):
+            p = mock.patch.object(target, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        import herdr_task.home as home
+        import herdr_task.assistant_settings as aset
+        import herdr_task.reactions as reactions
+        for target, name in ((home, "log_news"), (aset, "settings_pass"), (reactions, "reactions_pass")):
+            p = mock.patch.object(target, name, lambda *a, **k: None)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t0"})
+        p.start()
+        self.addCleanup(p.stop)
+        with store.Store(store.locate(self.folder)) as s:
+            t = s.new("Fix login")
+            t.update(state="running", started=1, space="sp1", agents=[{"address": "t1", "at": 1}])
+            self.ref, self.key = s.ref(t), s.key(t)
+        # its worker, its reviewer (the worker's hc child), and an Assistant
+        self.term("t1", turn=3, status="idle", **{"herdr.task": self.key, "herdr.role": "worker"})
+        self.term("t2", turn=1, status="idle", parent="t1", **{"herdr.task": self.key, "herdr.role": "reviewer"})
+        self.term("t0", turn=9, status="working", **{"herdr.role": "coordinator"})
+
+    def term(self, addr, turn, status, parent=None, **labels):
+        self.terms[addr] = {"address": addr, "agent": "claude", "state": "live", "turn": turn, "status": status,
+                            **({"parent": parent} if parent else {}), "labels": labels}
+
+    def cmd(self, fn, **kw):
+        args = self.argparse.Namespace(**{**dict(folder=self.folder, json=True, id=None, agent=None, at=None, in_=None,
+                                                 snooze_until=None, all=False, archived=False), **kw})
+        out = self.io.StringIO()
+        with self.redirect(out):
+            try:
+                fn(args)
+            except self.Fail as e:
+                return {"error": str(e)}
+        return json.loads(out.getvalue())
+
+    def labels(self, addr):
+        return self.terms[addr]["labels"]
+
+    def test_settle_labels_each_live_worker_not_its_reviewer_and_ends_a_snooze(self):
+        self.labels("t1")["snoozed"] = str(self.NOW + 3600_000)
+        out = self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.assertEqual(out, {"ok": True, "settled": ["t1"], "at": self.NOW, "was_snoozed": {"t1": self.NOW + 3600_000}})
+        self.assertEqual(self.labels("t1").get("settled"), f"{self.NOW}:3")
+        self.assertNotIn("snoozed", self.labels("t1"))
+        self.assertNotIn("settled", self.labels("t2"))
+
+    def test_unsettle_puts_back_a_snooze_that_hasnt_run_out(self):
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        out = self.cmd(self.rest.cmd_unsettle, id=self.ref, snooze_until=self.NOW + 60_000)
+        self.assertEqual(out["unsettled"], ["t1"])
+        self.assertEqual(self.labels("t1"), {"herdr.task": self.key, "herdr.role": "worker", "snoozed": str(self.NOW + 60_000)})
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.cmd(self.rest.cmd_unsettle, id=self.ref, snooze_until=self.NOW - 1)  # ran out meanwhile: not put back
+        self.assertFalse({"settled", "snoozed"} & set(self.labels("t1")))
+
+    def test_snooze_in_or_at_writes_the_wake_and_ends_a_settle_a_past_time_is_refused(self):
+        import datetime
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        out = self.cmd(self.rest.cmd_snooze, id=self.ref, in_="3h")
+        self.assertEqual((out["snoozed"], out["until"]), (["t1"], self.NOW + 3 * 3600_000))
+        self.assertEqual(self.labels("t1").get("snoozed"), str(self.NOW + 3 * 3600_000))
+        self.assertNotIn("settled", self.labels("t1"))
+        out = self.cmd(self.rest.cmd_snooze, id=self.ref, at="tomorrow 9:00")
+        wake = datetime.datetime.fromtimestamp(out["until"] / 1000)
+        self.assertEqual((wake.hour, wake.minute, out["when"]), (9, 0, "Tomorrow 9:00"))
+        past = datetime.datetime.fromtimestamp(self.NOW / 1000) - datetime.timedelta(days=1)
+        for kw in ({"at": past.strftime("%Y-%m-%d %H:%M")}, {"at": "today 0:00"}):
+            self.assertEqual(self.cmd(self.rest.cmd_snooze, id=self.ref, **kw), {"error": "That time has passed. Choose another."})
+        self.assertIn("error", self.cmd(self.rest.cmd_snooze, id=self.ref))
+
+    def test_wake_clears_the_snooze(self):
+        self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h")
+        self.assertEqual(self.cmd(self.rest.cmd_wake, id=self.ref), {"ok": True, "woke": ["t1"]})
+        self.assertNotIn("snoozed", self.labels("t1"))
+
+    def test_agent_labels_that_terminal_and_one_of_id_or_agent(self):
+        self.term("t5", turn=4, status="idle", **{"herdr.role": "coordinator"})
+        self.assertEqual(self.cmd(self.rest.cmd_settle, agent="t5")["settled"], ["t5"])
+        self.assertEqual(self.labels("t5")["settled"], f"{self.NOW}:4")
+        self.assertIn("error", self.cmd(self.rest.cmd_settle))
+        self.assertIn("error", self.cmd(self.rest.cmd_settle, id=self.ref, agent="t5"))
+        # its own chat, at work while it runs this: refused (the settle would end with its turn)
+        self.assertIn("error", self.cmd(self.rest.cmd_settle, agent="t0"))
+        self.assertIn("snoozed", self.cmd(self.rest.cmd_snooze, agent="t0", in_="1h"))
+
+    def test_no_live_agent_is_said(self):
+        no = {"error": "It has no live agent to settle or snooze."}
+        self.assertEqual(self.cmd(self.rest.cmd_settle, agent="t77"), no)
+        self.terms["t1"]["state"] = "finished"
+        self.assertEqual(self.cmd(self.rest.cmd_settle, id=self.ref), no)
+        self.assertEqual(self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h"), no)
+
+    def test_list_json_carries_rest(self):
+        task = lambda: self.cmd(self.commands.cmd_list)["tasks"][0]
+        self.assertEqual((task()["rest"], task()["rest_info"]), (None, None))
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        v = task()
+        self.assertEqual((v["rest"], v["rest_info"], v["status"]), ("settled", {"rest": "settled", "at": self.NOW}, "needs"))
+        self.assertEqual(v["live"][0]["settled"], f"{self.NOW}:3")
+        self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h")
+        self.assertEqual(task()["rest"], "snoozed")
+        self.terms["t1"]["status"] = "blocked"  # it asks: shows, not on the shelf
+        self.assertEqual(task()["rest_info"], {"rest": None, "until": self.NOW + 3600_000, "showing": True})
+
+    def told(self):
+        self.news.news_pass({})
+        out, self.sent[:] = list(self.sent), []
+        return out
+
+    def test_a_settled_task_isnt_news(self):
+        self.terms["t1"]["status"] = "working"
+        self.assertEqual(self.told(), [])  # the first look only notes
+        # it ends its turn: needs you, unless settled first
+        self.terms["t1"].update(status="idle", turn=4)
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.assertEqual(self.told(), [])
+        self.clock += 3600_000
+        self.assertEqual(self.told(), [])
+        # new work brings it back; once it waits again, that's news
+        self.terms["t1"].update(turn=5)
+        lines = self.told()
+        self.assertEqual(len(lines), 1)
+        self.assertIn('event="needs-you"', lines[0])
+
+    def test_a_settled_task_sets_off_no_automation_and_no_alert(self):
+        working = {"id": 1, "state": "running", "status": "working", "needs": None, "rest": None}
+        seen = {}
+        self.au.diff_events([working], seen)
+        waits = dict(working, status="idle", needs="reply", rest="settled")
+        self.assertEqual(self.au.diff_events([waits], seen), [])
+        self.assertEqual(self.au.diff_events([dict(waits, rest=None)], seen), [("needs-you", dict(waits, rest=None))])
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            self.assertEqual(self.au.task_facts(s, s.find(self.ref))["rest"], "settled")
+        out = self.cmd(self.commands.cmd_alert, title="Deploy is down", body=None, task=self.ref)
+        self.assertEqual((out["sent"], out["rest"]), (False, "settled"))
+        self.assertFalse(any("herdr.alert" in " ".join(a) for a in self.ran))
+
+    def test_the_round_clears_a_stale_settle_and_a_snooze_on_a_failure(self):
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.rest.rest_pass({})
+        self.assertIn("settled", self.labels("t1"))  # nothing new: kept
+        self.terms["t2"]["status"] = "working"  # its reviewer at work: new work under it
+        report = {}
+        self.rest.rest_pass(report)
+        self.assertNotIn("settled", self.labels("t1"))
+        self.assertEqual(report["rest_cleared"], [{"address": "t1", "cleared": ["settled"]}])
+        self.terms["t2"]["status"] = "idle"
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.terms["t1"]["turn"] = 4  # a turn ended since
+        self.rest.rest_pass({})
+        self.assertNotIn("settled", self.labels("t1"))
+        self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h")
+        self.rest.rest_pass({})
+        self.assertIn("snoozed", self.labels("t1"))
+        self.terms["t1"]["status"] = "error"
+        self.rest.rest_pass({})
+        self.assertNotIn("snoozed", self.labels("t1"))
+        # an Assistant's workers at work don't end its settle
+        self.term("t5", turn=4, status="idle", **{"herdr.role": "coordinator", "settled": f"{self.NOW}:4"})
+        self.term("t6", turn=1, status="working", parent="t5", **{"herdr.task": "x#1"})
+        self.rest.rest_pass({})
+        self.assertIn("settled", self.labels("t5"))

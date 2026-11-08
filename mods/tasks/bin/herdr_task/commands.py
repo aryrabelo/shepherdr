@@ -31,6 +31,7 @@ from .output import line, minutes, say, view
 from .scheduler import ensure_scheduler
 from .proof import evidence, find_proof
 from .when import when_from
+from .rest import resting
 
 
 # ---- commands -------------------------------------------------------------------------------
@@ -578,19 +579,30 @@ def cmd_alert(args):
     if not me:
         raise Fail("Run it from an agent's own terminal (there's no HC_TERMINAL_ID here).")
     labels = caller_labels()
-    ref = None
+    ref = task = key = None
     if args.task:
         with open_store(argparse.Namespace(folder=args.folder, id=args.task), write=False) as s:
-            ref = s.ref(s.find(args.task))
+            task = s.find(args.task)
+            ref, key = s.ref(task), s.key(task)
     elif labels.get("herdr.task"):
         # Its own task: "<slug>#<n>" -> HERD-44, from that list's prefix.
-        slug, _, n = labels["herdr.task"].rpartition("#")
+        key = labels["herdr.task"]
+        slug, _, n = key.rpartition("#")
         try:
             with open(os.path.join(STORE, f"{slug}.json")) as f:
-                pre = json.load(f).get("prefix")
-        except (OSError, ValueError):
+                d = json.load(f)
+            pre = d.get("prefix")
+            task = next((t for t in d.get("tasks") or [] if str(t.get("id")) == n), None)
+        except (OSError, ValueError, AttributeError):
             pre = None
         ref = f"{pre}-{n}" if pre else None
+    # A task settled or snoozed by hand (ASH-12) isn't news: no toast or sound about it until it has new work or
+    # wakes (or needs the person: then it isn't resting).
+    rest = resting(task, key) if task and key else None
+    if rest:
+        out = {"sent": False, "rest": rest, **({"task": ref} if ref else {})}
+        say(args, out, f"Not sent: {ref or 'its task'} is {rest}, so it isn't news until it has new work or wakes.")
+        return
     # The label holds what a toast shows (inbox.js cuts it again to fit).
     alert = {"id": secrets.token_hex(4), "at": now(), "title": title[:120], "body": body[:300],
              **({"task": ref} if ref else {}), **({"about": True} if args.task else {})}

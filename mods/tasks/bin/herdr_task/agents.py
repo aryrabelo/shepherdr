@@ -53,6 +53,16 @@ def detail(k):
     return hc_json("get", k["address"]) or k
 
 
+def rest_now(task, key, running):
+    """ASH-12: a task settled or snoozed by hand (settle.task_rest), or None. running: its running agents as hc get
+    gives them (hc ls has no labels). Its worker's helpers are asked only once one of them carries a settle or a
+    snooze, so a task nobody put away costs nothing more."""
+    from .settle import SETTLED, SNOOZED, labels_of, task_rest
+    if not any(labels_of(k).get(SETTLED) or labels_of(k).get(SNOOZED) for k in running):
+        return None
+    return task_rest(task, running, live_helpers(key), now())
+
+
 def agent_running(k):
     fg = (k.get("foreground") or {}).get("name") or ""
     if fg:
