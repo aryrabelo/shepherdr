@@ -5,6 +5,7 @@ import { spacesWithChats as spaces, sweep } from "./parked.js";
 import { agentIn, isCoordinatorTab, closeTab, watchNewSpaces, newSpace, openCoordinator, renameTab, renameSpace } from "./coordinator.js";
 import { startTick, tickOnChange } from "./tick.js";
 import { startInbox, count as inboxCount, countsByTab, readyCount, readyByTab, showInbox, toAlert } from "./inbox.js";
+import { undoRest } from "./rest.js";
 import { serveRemote } from "./secrets.js";
 import { watchService } from "./service.js";
 import { startBridge } from "./bridge.js";
@@ -89,6 +90,9 @@ export default class Tabs extends View {
         if (c === "inbox") showInbox();
         // An agent's alert (herdr-task alert), clicked: "alert-<terminal>" ("~" for "/"), to that agent (inbox.js).
         if (c.startsWith("alert-")) toAlert({ terminal: c.slice(6).replace(/~/g, "/") });
+        // A settle's or snooze's toast, clicked (ASH-12, rest.js): "undo-rest-<at>", that one undone. Here because the
+        // tab bar is always loaded, whichever mod settled it.
+        if (c.startsWith("undo-rest-")) undoRest(Number(c.slice(10)));
       }
     });
   }

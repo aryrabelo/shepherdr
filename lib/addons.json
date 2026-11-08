@@ -28,6 +28,7 @@
       "about": "The Tasks panel, the Accept card and herdr-task: every task with its own agent, worktree, review and merge.",
       "mods": ["tasks", "tasks-menu", "accept-card", "task-files", "task-changes", "task-pr"],
       "blocks": ["tasks", "tasks-list", "tasks-thread"],
+      "keys": ["mod:chat ctrl-shift-s"],
       "helpers": ["herdr-task"], "templates": ["worker", "reviewer"] },
     { "id": "assistants", "title": "Assistants", "switch": false, "needs": ["tasks"],
       "about": "A coordinator for every space that turns what you write into tasks, and tells you their news.",

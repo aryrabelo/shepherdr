@@ -21,6 +21,9 @@ test("Shepherdr's keys.json grouped: the layout's own key replaces the global on
   expect(row("App", "Jump to a space, task or artifact").keys).toEqual(["Ctrl+K", "Ctrl+Shift+K"]);
   expect(row("App", "Keybinds").keys).toEqual(["Ctrl+Shift+/", "Ctrl+Shift+?"]);
   expect(row("Chat", "Find in the chat").keys).toEqual(["Ctrl+F"]);
+  // ASH-12: Ctrl+Shift+S, never Cmd+Shift+S (herdr-t3-inbox's global key, left free so both run)
+  expect(row("Chat", "Settle or unsettle the agent").keys).toEqual(["Ctrl+Shift+S"]);
+  expect(Object.values(repoKeys).some((m) => m?.["cmd-shift-s"])).toBe(false);
 });
 
 test("the web's keys are the window's: each one bound the same in Shepherdr's keys.json or Herdr's defaults, every one named", () => {

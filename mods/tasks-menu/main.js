@@ -9,14 +9,19 @@
 //             "tasks.pinned" (mods/tasks keeps the same list). A task not started yet (props().status
 //             todo, queued or scheduled) also starts later (SHEP-38): herdr-task edit --in / --at on
 //             props().machine, folder and ref; a scheduled one Start now and Unschedule. What herdr-task
-//             refuses shows as a toast.
+//             refuses shows as a toast. A task with a live agent is settled or snoozed here too (ASH-12,
+//             props().rest = { can, rest, snoozed }: rest.js runs herdr-task settle, unsettle, snooze, wake);
+//             pinning a snoozed one ends its snooze, settling a pinned one takes its pin (as T3's).
+//   "rest"    an Assistant's Snooze menu (mods/pane-chat's header): Settle or Unsettle, Snooze's times and
+//             Wake for its agent props().agent (core/menus.js restMenu); props().what names it in toasts.
 // ↑/↓ move, Enter picks, Esc closes.
 
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "herdr";
 import { menuRow, heading, toast, TEXT } from "./ui.js";
-import { taskMenu } from "./core/menus.js";
+import { taskMenu, restMenu } from "./core/menus.js";
+import { settle, unsettle, snooze, wake } from "./rest.js";
 
 // Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
 const GROUPS = [{ key: "you", label: "For you" }, { key: "space", label: "Space" }, { key: "status", label: "Status" }];
@@ -25,6 +30,8 @@ const GROUPS = [{ key: "you", label: "For you" }, { key: "space", label: "Space"
 function sections() {
   const p = props() ?? {};
   if (p.menu === "row") return rowSections(p);
+  if (p.menu === "rest") return itemSections(restMenu({ rest: p.rest ?? null, snoozed: Boolean(p.snoozed) }), () => null,
+    (key) => restPick({ agent: p.agent }, p.what ?? "the Assistant", key, sections, false));
   if (p.menu === "filter") return [{ title: null, items: p.items ?? [], current: p.current,
     pick: (key) => setShared("tasks.filterreq", { key, at: Date.now() }) }];
   const current = GROUPS.some((g) => g.key === p.current) ? p.current : "you";
@@ -34,26 +41,52 @@ function sections() {
 // A row's menu (core/menus.js taskMenu, the web's too): its sections between the lines, a heading
 // over Start later's times. Other time… is the web's (a typed time): here the Assistant does that.
 function rowSections(p) {
+  return itemSections(taskMenu({ pinned: p.on, status: p.status ?? null, rest: p.rest ?? null }),
+    (heading) => (heading !== "Snooze" && p.status === "scheduled" && p.sub ? `${heading} · ${p.sub}` : heading), (key) => rowPick(p, key));
+}
+
+// A menu list (core/menus.js) as sections: one per line or heading (its title: titleOf(heading)), with its rows.
+// Typed items (Other time…: the web's field) aren't the window's.
+function itemSections(list, titleOf, pick) {
   const out = [];
   let cur = null;
-  for (const it of taskMenu({ pinned: p.on, status: p.status ?? null })) {
+  for (const it of list) {
     if (it.typed) continue;
-    if (it.sep || it.heading || !cur) out.push(cur = { title: it.heading ? (p.status === "scheduled" && p.sub ? `${it.heading} · ${p.sub}` : it.heading) : null,
-      checks: false, current: null, items: [], pick: (key) => rowPick(p, key) });
+    if (it.sep || it.heading || !cur) out.push(cur = { title: it.heading ? titleOf(it.heading) ?? it.heading : null,
+      checks: false, current: null, items: [], pick });
     if (it.sep || it.heading) continue;
-    cur.items.push({ key: `${it.id}:${cur.items.length}`, label: it.label, at: it.at, in: it.in, id: it.id,
-      icon: it.icon === "play" ? "mods/tasks/play.svg" : `mods/workspace-chrome/${it.icon}.svg` });
+    cur.items.push({ key: `${it.id}:${cur.items.length}:${out.length}`, label: it.label, at: it.at, in: it.in, id: it.id, icon: iconOf(it.icon) });
   }
   return out.filter((s) => s.items.length);
+}
+
+// Herdr's own icons (workspace-chrome), else this mod's.
+const OWN = new Set(["rotate-ccw", "bell"]);
+const iconOf = (icon) => (icon === "play" ? "mods/tasks/play.svg" : OWN.has(icon) ? `mods/tasks-menu/${icon}.svg` : `mods/workspace-chrome/${icon}.svg`);
+
+// Settle, Unsettle, a snooze or Wake (rest.js: herdr-task, the toasts and their undo). false: not one of them.
+function restPick(x, what, key, all, pin) {
+  const it = all().flatMap((s) => s.items).find((i) => i.key === key);
+  if (!it) return true;
+  if (it.id === "settle") settle(x, what, { pin: pin || null });
+  else if (it.id === "unsettle") unsettle(x, what);
+  else if (it.id === "snooze") snooze(x, what, it);
+  else if (it.id === "wake") wake(x, what);
+  else return false;
+  return true;
 }
 
 function rowPick(p, key) {
   const it = rowSections(p).flatMap((s) => s.items).find((x) => x.key === key);
   if (!it) return;
+  const task = { machine: p.machine ?? null, folder: p.folder, ref: p.ref };
+  if (restPick(task, p.ref, key, () => rowSections(p), p.on ? p.key : null)) return;
   if (it.id === "pin" || it.id === "unpin") {
     const v = shared("tasks.pinned");
     const rest = (Array.isArray(v) ? v : []).filter((k) => k !== p.key);
     setShared("tasks.pinned", p.on ? rest : [...rest, p.key]);
+    // A pin ends a snooze (as T3's): the task is back where the person put it.
+    if (!p.on && p.rest?.snoozed) wake(task, p.ref, { quiet: true });
     return;
   }
   const args = it.id === "start-now" ? ["start", p.ref, "--now"] : it.id === "unschedule" ? ["edit", p.ref, "--at", ""]
