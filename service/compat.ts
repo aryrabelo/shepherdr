@@ -35,6 +35,10 @@ const { NOTIFY, everywhereOf, spaceLevel, machineLevel, machineOfSpace, spaceOwn
 // Settings › Notify's words, the window's own (core/settings.js)
 import * as STcore from "../core/settings.js";
 const STc = STcore as any;
+import * as THc from "../core/threads.js";
+import * as RSc from "../core/settle.js";
+const { threadHome, isLooseAgent, agentSection } = THc as any;
+const { agentRest, wordOf } = RSc as any;
 
 const { ago } = T as any;
 
@@ -346,7 +350,10 @@ export class Compat {
           return { id: t.id, name: (MNc as any).tabName(named(t.raw) ? t.raw : "", prog), named: named(t.raw), term: `t:${t.addr}`,
             ...(cli ? { cli } : {}), ...(agent || cli ? { agent: agent?.key ?? cli } : {}), state: stateOf(k), where: shortHome(k?.foreground?.cwd ?? k?.cwd),
             // what its pane header calls it: the agent, else the program in front, else its title
-            prog: prog ?? (k?.foreground?.name || k?.title || "Shell") };
+            prog: prog ?? (k?.foreground?.name || k?.title || "Shell"),
+            // ASH-14: an agent of the space's own (not its Assistant, a task's or a helper) is a thread under its row:
+            // its status word, its section among the threads, when its status last changed, and its rest
+            ...(isLooseAgent(k, s.assistant) ? { thread: true, word: wordOf(k), section: agentSection(wordOf(k)), at: Number(k.status_ms) || 0, ...restOf(agentRest(k)) } : {}) };
         });
       // the Assistant's own tab (first in the bar): the tab its terminal or chat is in
       const ak: any = s.assistant ? (this as any).terminalsOf?.(s.assistant) : null;
@@ -389,6 +396,10 @@ export class Compat {
         // ASH-12: settled or snoozed by hand (its own shelf at the end of a list, never news), and whether it can be: a
         // live agent of its own to label
         ...restOf(r.restInfo), ...(r.worker ? { canRest: true } : {}),
+        // ASH-14: the space it is a thread of (core/threads.js threadHome), whether it can be settled from its row (with no
+        // live agent too), and its latest activity (the order among its space's threads)
+        ...((h) => (h ? { home: h } : {}))(threadHome(spaces, { machine: r.machine ?? null, folder: r.folder, space: r.space })),
+        ...(r.canSettle ? { canSettle: true } : {}), ...(r.activity ? { activity: r.activity } : {}),
         // its worker's own helper agents (SHEP-54), named in its detail's header; each one's row is over its chat's box
         ...(r.subagents?.length ? { subagents: r.subagents.map((x: any) => ({ chat: `t:${x.address}`, title: x.title, status: x.status, at: x.at, ...(x.ended ? { ended: x.ended } : {}) })) } : {}),
         // the window's Accept card accepting it now (shared "tasks.accepting", mods/accept-card): "Accepting…"

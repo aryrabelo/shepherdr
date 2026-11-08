@@ -76,6 +76,35 @@ test("an Assistant's rest in the snapshot, from its terminal's labels (core/sett
   expect(snapOf(c, [], [space({ assistantRest: { rest: null, woke: 500 } })]).places[0].woke).toBe(500);
 });
 
+test("ASH-14 threads: a task's home space, whether its row settles it, its activity; a tab's own agent is a thread", () => {
+  const c = new C.Compat() as any;
+  const k = (address: string, more: any = {}) => ({ address, state: "live", labels: {}, turn: 1, status: { state: "idle" }, status_ms: 500, ...more });
+  const terms: Record<string, any> = {
+    t2: k("t2", { status: { state: "blocked" }, status_ms: 900 }),
+    t3: k("t3", { labels: { settled: "400:1" } }),
+    // a task's agent is its task's thread; a shell reports no status
+    t4: k("t4", { labels: { "herdr.task": "/srv/shop#1" } }),
+    t5: { address: "t5", state: "live", labels: {} },
+  };
+  c.terminalsOf = (a: string) => terms[a] ?? null;
+  const tabs = ["t2", "t3", "t4", "t5"].map((a, i) => ({ id: `tb${i}`, name: a, terminals: [a] }));
+  const s = snapOf(c, [
+    row("SHOP-1", "working", { space: "sp2", canSettle: true, activity: 700 }),
+    // no live agent: it settles from its row (kept on the task), it can't snooze
+    row("SHOP-2", "todo", { worker: null, canSettle: true, rest: "settled", restInfo: { rest: "settled", at: 50 } }),
+    row("SHOP-3", "done", { canSettle: false, done_at: NOW }),
+    row("SHOP-4", "ready", { folder: "/srv/else" }),
+  ], [space({ tabs }), space({ id: "sp2", name: "shop2", assistant: null })]);
+  const t = Object.fromEntries(s.tasks.map((x: any) => [x.id, x]));
+  expect([t["SHOP-1"].home, t["SHOP-1"].canSettle, t["SHOP-1"].activity]).toEqual(["sp2", true, 700]);
+  expect([t["SHOP-2"].home, t["SHOP-2"].canSettle, t["SHOP-2"].canRest, t["SHOP-2"].rest]).toEqual(["sp1", true, undefined, "settled"]);
+  expect([t["SHOP-3"].canSettle, t["SHOP-4"].home]).toEqual([undefined, undefined]);
+  const tab = Object.fromEntries(s.places[0].tabs.map((x: any) => [x.term, x]));
+  expect([tab["t:t2"].thread, tab["t:t2"].word, tab["t:t2"].section, tab["t:t2"].at, tab["t:t2"].rest]).toEqual([true, "blocked", "needs", 900, undefined]);
+  expect([tab["t:t3"].thread, tab["t:t3"].section, tab["t:t3"].rest, tab["t:t3"].restAt]).toEqual([true, "idle", "settled", 400]);
+  expect([tab["t:t4"].thread, tab["t:t5"].thread]).toEqual([undefined, undefined]);
+});
+
 test("a space's counts leave settled and snoozed tasks out; its Assistant asking still counts", () => {
   const here = [{ section: "needs" }, { section: "needs", rest: "settled" }, { section: "ready" }, { section: "ready", rest: "snoozed" }];
   expect(M.spaceCounts(here, true)).toEqual({ red: 2, green: 1 });

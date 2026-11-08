@@ -19,7 +19,9 @@ const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
 const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
 import * as RS from "../core/settle.js";
-const { restFields, agentRest } = RS as any;
+const { restFields, agentRest, taskCan } = RS as any;
+import * as TH from "../core/threads.js";
+const { taskActivity } = TH as any;
 
 /** What a space's row counts (the window's): its tasks that need you, its Assistant asking, and Ready tasks; a task
  *  settled or snoozed (ASH-12) counts in neither. */
@@ -258,6 +260,10 @@ export class Model {
         key: taskKey(list, task), ref: refOf(list, task), title: task.title, section: p.section, needs: p.needs,
         // ASH-12: settled or snoozed by hand (core/settle.js taskRest): its own shelf, and never news
         rest: p.rest ?? null, restInfo: p.restInfo ?? null,
+        // ASH-14: settled from its row with no live agent too (kept on the task); its latest activity orders it among
+        // its space's threads (its live agents' latest status change counts)
+        canSettle: taskCan(p.section, live).settle,
+        activity: taskActivity(task, Math.max(0, ...live.map((a) => Number((this.hub.terminals.get(a.address) as any)?.status_ms) || 0))),
         sub: secondLine(p, w, p.section === "queued" ? queueReason(list, task, running) : null), left: leftOf(p, w), pct: w?.done ?? null,
         // what its agent last said (core reportOf), as the window's task header shows it: working, and frozen while it
         // needs the person

@@ -5,8 +5,9 @@
 // Needs you, then one group per space. Status: one group per status. A filter row picks one status (All statuses,
 // Needs you, Working, Ready, the rest under More). Each status or Pinned heading folds what is under it away. This space, first in the filter row (kept on this device), narrows it all to the place picked. A row says where its task is, as far as the grouping doesn't; a Ready row has Review. A
 // row's menu pins it, starts it later, and settles or snoozes it (core/menus.js taskMenu, the window's too; ASH-12:
-// rest.tsx); the Assistant does the rest. Settled and snoozed tasks are on two shelves at the very end, Snoozed then
-// Settled (folded until opened). Done tasks archive themselves: the Archived row at the bottom opens them.
+// rest.tsx; ASH-14: one with no live agent settles too, without Snooze); the Assistant does the rest. Settled and
+// snoozed tasks are on two shelves at the very end, Snoozed then Settled (folded until opened); one put away (or back)
+// moves there at once (threads.ts marks). Done tasks archive themselves: the Archived row at the bottom opens them.
 import clsx from 'clsx'
 import { openAccept, useAccepting } from '@client/screens/Accept.tsx'
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
@@ -49,6 +50,7 @@ import {
   taskOf,
   useSnap,
   useStore,
+  useRestNow,
   useUI,
   type GroupBy,
   type ListView,
@@ -89,6 +91,7 @@ import { RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
 import { taskWho } from '@shared/alerts.ts'
 import { useRest, type MenuEntry } from './rest.tsx'
 import * as MN from '@core/menus.js'
+import { withMarks } from '@client/threads.ts'
 import * as TK from '@core/tasks.js'
 import * as ND from '@core/needs.js'
 
@@ -229,7 +232,8 @@ const OTHER = MN.SCHEDULE_OTHER as { placeholder: string; label: string; button:
 /** A task's one menu, in its row's ⋯ and its chat's, as 3.0's (core/menus.js taskMenu): Pin or Unpin; a task not started
  *  yet also Start later (SHEP-38): a few times, or one typed in herdr-task's words (Other time…), and a scheduled one
  *  Start now and Unschedule. What herdr-task refuses (a time it doesn't know) shows under it, the menu kept open. A
- *  task with a live agent first Settle (Unsettle) and Snooze, Wake while snoozed (ASH-12, rest.tsx). */
+ *  task with a live agent first Settle (Unsettle) and Snooze, Wake while snoozed (ASH-12, rest.tsx); one with none
+ *  Settle (Unsettle) alone (ASH-14: kept on the task). */
 function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
   const [typing, setTyping] = useState(false)
   const [text, setText] = useState('')
@@ -245,8 +249,8 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
     if (r?.ok === false) setError(r.error ?? "Couldn't schedule it.")
     else close()
   }
-  // a snooze set (or woke, not looked at yet): Wake
-  const restOn = { can: !!t.canRest && !t.archived, rest: t.rest ?? null, snoozed: !!t.restUntil || !!t.woke }
+  // a snooze set (or woke, not looked at yet): Wake; with no live agent, Settle without Snooze (ASH-14)
+  const restOn = { can: !!t.canRest && !t.archived, settle: !!t.canSettle && !t.archived, rest: t.rest ?? null, snoozed: !!t.restUntil || !!t.woke }
   const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status, rest: restOn })
   return (
     <>
@@ -480,6 +484,8 @@ function TaskList(_: { placeId: string }) {
   const wanted = useUI((u) => u.taskFilter)
   const here = useUI((u) => u.thisSpace && view.chips.length === 1 && view.chips[0] === u.place)
   const q = useUI((u) => filterOf(u, view.search, 'tasks'))
+  // rows put away (or back) from this screen, moved at once (ASH-14)
+  const marks = useRestNow()
   const place = placeOf(snap, getState().ui.place)
   const by = groupFor(chosen, view.level)
   // a task moving to another group glides there; a new one fades in; what a filter, Show more or a fold leaves just shows
@@ -498,7 +504,7 @@ function TaskList(_: { placeId: string }) {
   const loaded = !!snap.places.length || !!snap.tasks.length
   // what the search field holds: only what matches it shows, in its group (the window's matches())
   const asks = agentNeeds(snap, view.chips).filter((n) => !q || matches(q, n.who, n.why, n.where))
-  const live = tasksIn(snap, view).filter((t) => !q || found(snap, t, q))
+  const live = withMarks(tasksIn(snap, view), marks).filter((t) => !q || found(snap, t, q))
   // put away by hand (ASH-12): on their shelves at the end, in no status of the filter row
   const awake = live.filter((t) => !resting(t))
   const autos = autosIn(snap, view.chips).filter((a) => !q || matches(q, a.name, a.listName, a.machine ? machineName(snap.machines, a.machine) : undefined))
@@ -536,7 +542,7 @@ function TaskList(_: { placeId: string }) {
   let groups = q
     ? filteredGroups(snap, view, '', { groups: chosen }).map((g) => keepTasks(g, (t) => found(snap, t, q))).filter((g) => g.tasks.length)
       .map((g) => ({ ...g, count: g.tasks.length, more: 0, less: false, shut: false }))
-    : shownGroups(snap, view, { groups: chosen, allDone, shut })
+    : shownGroups(snap, view, { groups: chosen, allDone, shut }, marks)
   // what agents ask needs you too: For you (or Needs you) is a group of its own when no task is in it, first but Pinned
   const askKey = by === 'you' ? 'you' : 'need'
   if (asks.length && !groups.some((g) => g.key === askKey)) {
