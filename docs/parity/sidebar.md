@@ -117,4 +117,24 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Alt+Shift+↑/↓ on a focused row | none | P:156 `moveKey` | ◇ the keyboard's form of the window's drag |
 | Rail (sidebar under 160 px) | main.js:666 numbers and a status glyph | none | ◇ the web hides the sidebar instead of narrowing it |
 
-Counts: ✓ 62, ◇ 11, ✗ 0.
+## Threads (ASH-14)
+
+Window: `mods/spaces-chat/threads.js` (T), `main.js` `withThreads`, `lib/taskthread.js` (TT). Web: P `Threads`,
+`ThreadRow`, `ThreadMenu`, `web/src/threads.ts` (TH), the data in `service/compat.ts`, `service/model.ts`. Shared:
+`core/threads.js` (which threads, their order, the shelves, an agent's line: `core/threads.test.js`), `core/settle.js`
+(`keptSettle`, `agentRest`, `taskCan`, the at-once marks: `core/settle.test.js`).
+
+| Element | Window | Web | State |
+|---|---|---|---|
+| Which threads | T:100 `bySpace`: a space's tasks in Needs you / Working / Merging / Ready / Queued or put away (core `isThread`), each under one space (core `threadHome`: the space that started it, else its folder's), and its own agents in its tabs, not its Assistant, a task's agent or a helper (core `isLooseAgent`: an omp without hooks too) | compat Task `home`, a tab's `thread`; TH `placeThreads` | ✓ |
+| Order | needs you, then working, then the rest by latest activity (core `threadsOf`, `taskActivity`) | TH `placeThreads` → core `threadsOf` | ✓ |
+| Shelves | T:147 a "Snoozed" heading and its rows (soonest to wake first), then Settled folded to "N settled" (core `SHELF`), a click opens it, open per space in localStorage (`settledOpenKey`); a thread on a shelf shows nowhere else | P:627 the same; open per space in the device's `ui.shut` (`settledOpenKey`) | ✓ |
+| Row | T:185 dot (`taskDot`: a check or a clock when put away), title (" · hq#N" from ASH-13), second line (core `secondLine` / `agentLine`: "Próximo: …", "Wakes Today 18:00", "Settled 2m ago", "Woke"), indented under the name; bright while its agent is focused | P:664 `ThreadRow`: the Tasks list's dot, title, compat `sub` / core `agentLine`; the open one marked | ✓ |
+| Click | a task opens its chat in the Tasks panel (TT `taskTarget`, `openThread`: the panel shows first if hidden); an agent goes to its terminal (inbox.js `toAgent`) | a task opens its chat as a Tasks row does; an agent its tab (`t:<addr>`) | ✓ |
+| Menu | right-click: mods/tasks-menu "rest" (TT `openRestMenu`, core `restMenu`): Settle or Unsettle (a task with no live agent too: core `taskCan`), Snooze's times with a live agent, Wake | P:694 `ThreadMenu` (right-click, a held finger): rest.tsx `useRest`, the same core list | ◇ the web also has Other time… (as ASH-12's Snooze) |
+| Moves at once | lib/rest.js marks every settle/unsettle/snooze/wake in shared "tasks.restnow"; TT `placeTask`/`marked` show it until herdr-task's labels or the task's file agree (core `shownRest`), `dropSpent` after a render; a refusal takes it back | kernel `restNow` (rest.tsx marks before the request), TH `withMarks`, `marksLeft` on each snapshot | ✓ |
+| New work brings it back | a new turn, a busy sub-agent, a failure, failing checks, a start or a new agent (core `taskRest`, `keptSettle`, `agentRest`) | the same, from the snapshot | ✓ |
+| Key | Ctrl+Shift+S (`chat.settle`) on the thread's chat once opened | keyboard plugin `chat.settle` on the open chat | ✓ |
+| Where | under its space in Pinned, a section or its machine, at full width (the rail shows none); hidden while its section is folded and the space isn't shown | under its place row, hidden with it; in the phone and tablet drawer too | ✓ |
+
+Counts: ✓ 71, ◇ 12, ✗ 0.
