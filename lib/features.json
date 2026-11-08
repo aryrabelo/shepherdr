@@ -557,6 +557,49 @@
       ]
     },
     {
+      "id": "settle-snooze",
+      "addon": "tasks",
+      "title": "Settle and Snooze",
+      "core": [
+        "settle",
+        "tasks",
+        "menus"
+      ],
+      "herdr": {
+        "mods": [
+          "tasks",
+          "tasks-menu",
+          "pane-chat",
+          "chat"
+        ]
+      },
+      "web": {
+        "files": [
+          "plugins/tasks/rest.tsx",
+          "plugins/tasks/client.tsx",
+          "src/groups.ts",
+          "plugins/coordinators/client.tsx",
+          "plugins/keyboard/client.tsx",
+          "src/unread.ts",
+          "src/attention.ts",
+          "plugins/alerts/toasts.tsx",
+          "shared/alerts.ts"
+        ]
+      },
+      "forms": {
+        "herdr": "Row menu: Settle/Unsettle, Snooze (picks, Other time…), Wake; the Assistant's header ✓ and clock; Ctrl+Shift+S; Snoozed and Settled groups last",
+        "desktop": "Right-click or ⋯ on a row; the Assistant's header ✓ and clock (picks and a typed time); Ctrl+Shift+S; a toast undoes it",
+        "tablet": "Long-press a row; the Assistant's header ✓ and clock",
+        "phone": "Long-press a row: sheet; the Assistant's in the header's ⋯"
+      },
+      "service": [
+        "actions.ts",
+        "compat.ts",
+        "model.ts",
+        "push.ts"
+      ]
+    },
+    {
       "id": "assistant",
       "addon": "assistants",
       "title": "Assistant per space",

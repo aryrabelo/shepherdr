@@ -7,6 +7,11 @@ import { closeArtifact, definePlugin, has, keysChat, setUI, togglePlaces, type U
 import { toggleDictation } from '@plugins/chat/client.tsx'
 import { openFind } from '@plugins/chat/find.tsx'
 import { toggleCall } from '@plugins/voice/client.tsx'
+import { toggleSettle } from '@plugins/tasks/rest.tsx'
+import { toast } from '@plugins/alerts/toasts.tsx'
+import { taskWho } from '@shared/alerts.ts'
+import * as RS from '@core/settle.js'
+import * as TS from '@core/toasts.js'
 import { ic, SearchIcon } from '@client/ui.tsx'
 import { Sheet, SheetClose } from '@client/Stack.tsx'
 import * as K from '@core/keys.js'
@@ -128,6 +133,18 @@ export default definePlugin({
         if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
           e.preventDefault()
           openFind(chatNow())
+          return true
+        }
+        // Ctrl+Shift+S (chat.settle, ASH-12): the agent in view settled, or back once it is (the window's key; Cmd+Shift+S
+        // is left to herdr-t3-inbox)
+        if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyS' && has('tasks')) {
+          e.preventDefault()
+          const key = chatNow()
+          const p = snap.places.find((x) => x.chat === key)
+          const t = p ? null : snap.tasks.find((x) => x.agent?.chat === key)
+          if (p?.assistantTab?.live) void toggleSettle({ chat: key, what: (TS.assistantWho as (n: string) => string)(p.name), rest: p.rest, restUntil: p.restUntil })
+          else if (t?.canRest) void toggleSettle({ chat: key, what: taskWho(snap, t.id), rest: t.rest, restUntil: t.restUntil })
+          else toast({ title: (RS.REST as { noAgent: string }).noAgent, level: 'warning' })
           return true
         }
         if (e.shiftKey && e.key === 'F2') {

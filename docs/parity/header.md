@@ -105,6 +105,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Flips at once; refusal toasts | AP:132 "Autopilot didn't turn on/off" | C:42 the same toast | ✓ |
 | "Write a heartbeat" | AP:128 on with an empty heartbeat → Settings › Autopilot | C:42 `pilot.blank` → Settings › Autopilot for the space | ✓ |
 | Status | PC:244-246 spinner; "Needs you" pill; done dot | C:103 StatusMark | ✓ |
+| Settle and Snooze (ASH-12) | PC: ✓ settles the Assistant until new work (Unsettle while settled), the clock opens `restMenu()` (Settle/Unsettle, Snooze's picks, Other time…, Wake); "Wakes Today 18:00" / "Woke" quietly; Ctrl+Shift+S (`chat.settle`) | C RestHeader (order 13, between the status and Autopilot), RestItems; `place.rest`, `restUntil`, `woke` (service/model.ts `assistantRest`); keyboard plugin Ctrl+Shift+S; phone: the same items first in ⋯ (PhoneRest) | ✓ (◇ phone: ⋯) |
 | × on hover: End agent | PC:249-258 "End Claude Code?" Cancel / End agent (`endAgent`), tooltip "End Claude Code" | C:116 PaneEnd, same words → `tab-end` | ✓ |
 | Split right, Split down, Zoom | PC:254-256 | none | ◇ one pane per tab on the web: Herdr's own pane layout isn't drawn |
 | Chat \| Terminal | PC:259 the Assistant's and every Claude Code / Codex pane's | T:337 the Assistant's, and another Claude Code / Codex tab's (`ui.tabView`); phone: ⋯ › Show | ✓ (◇ phone) |

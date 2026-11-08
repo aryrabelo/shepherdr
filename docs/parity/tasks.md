@@ -57,6 +57,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Nothing at all | T:361,545-547 "Nothing to do." / "No tasks on any machine. Ask an Assistant to plan some." | W | ✓ (was skipped while only archived tasks existed) |
 | No match | T:365 `No tasks match “q”.` | W | ✓ |
 | Reading | T:390 "Reading tasks…" | W | ✓ |
+| Snoozed and Settled (ASH-12) | T: two groups at the very end, after everything else, in every grouping: Snoozed (soonest to wake first), then Settled (folded until opened); a task on them is in no other group, nor in a filter chip's count (core/settle.js `REST_GROUPS`) | G `restGroups` (also `SNOOZED`, `SETTLED`), kernel `SETTLED_OPEN` (shut until opened), W TaskList `shelf`, `awake` | ✓ |
 | Lists unreadable | T:387-389 "Couldn't read the task lists: …" card | (the service reads them) | ◇ the service keeps the last lists; a read failure there shows as the service's own banner |
 
 ## Rows (every kind: Working, Needs you, Queued, Scheduled, Ready, Merging, To do, Done, archived, automation, agent need)
@@ -86,6 +87,9 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Selected | T:833 the focused agent's row | W the open task's row | ◇ the web has no focused pane; the open task is what's shown |
 | Right-click menu | T:786-790, TM:26-32 Pin / Unpin (core taskMenu) | W TaskMenu (right click, or a held finger) | ✓ / ◇ touch holds |
 | Start later (SHEP-38) | TM rowSections: a task not started yet: "Start later" ("Reschedule · Starts …" when scheduled) over In 1 hour, In 3 hours, Tomorrow 9:00, Monday 9:00; scheduled: Start now, Unschedule; a refusal is a toast | W TaskActions, the same core `taskMenu`; a refusal shows under it | ◇ the web also has Other time… (a typed time, herdr-task's words); in the window the Assistant takes any other time |
+| Settle and Snooze (ASH-12) | TM rowSections: a task with a live agent: Settle (Unsettle once settled); heading Snooze over Start later's picks and Other time…; Wake while a snooze is set (core `taskMenu` `rest`, `restMenu`, `SNOOZE_OTHER`); herdr-task settle / unsettle / snooze / wake | W TaskActions with rest.tsx `useRest` (the same core lists) → `settle` / `unsettle` / `snooze` / `wake` → service `restAct` (herdr-task, `was_snoozed` back); a refusal under the menu; Settled's toast `Settled SHEP-7 · Click to undo.` (`REST.settledToast`) puts it back, its snooze too | ✓ |
+| Snoozed and Settled rows | T: second line "Wakes Today 18:00" / "Settled 2m ago" / "Woke · …" (core `secondLine`), no status colour, no minutes left | W TaskRow: compat `sub` (core `secondLine`), a quiet clock or check for the dot, dimmed | ✓ |
+| Woke, then seen | T: its chat looked at clears "Woke" (herdr-task wake); a message sent to it, Wake, a pin or Settle end a snooze | src/unread.ts MarkRead `wokeIn` → `wake`; service `send` and `pin` → `wakeQuietly` | ✓ |
 | Agent need | T:617-628 its name, why (REASONS / request words), machine · space | W AgentNeedRow: "Assistant", REASONS.plan / the question / REASONS.permission | ✓ fixed (was "<space> Assistant", 2.1 words) |
 | Secret ask | (the window's inbox has no secret item) | W "Wants the secret NAME" | ◇ the web's secret card has to be reachable from the list; the window answers it in the chat |
 | Failed automation in Needs you | T:635-636 red repeat mark, its name, "Didn't run" / "Didn't start its task", tap opens Automations | W agentNeeds `autos`, AgentNeedRow | ✓ fixed (missing) |

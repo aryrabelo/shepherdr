@@ -15,18 +15,21 @@ import { openWorktree } from '@client/screens/Worktree.tsx'
 import { act, definePlugin, getState, has, registry, removeSpace, setUI, useSnap, useStore, useUI } from '@client/kernel.ts'
 import { Dialog } from '@client/rowmenu.tsx'
 import { sectionOf, Switch } from '@client/Settings.tsx'
-import { AttentionBadge, DiffIcon, Dot, field, FolderIcon, ic, IconButton, KeyboardIcon, Menu, MenuItem, MenuLabel, MenuSeparator, ModelIcon, MoreIcon, PageIcon, PlanIcon, PlusIcon, Primary, RenameIcon, RestartIcon, SplitIcon, TasksIcon, TermIcon, XIcon } from '@client/ui.tsx'
+import { AttentionBadge, CheckIcon, ClockIcon, DiffIcon, Dot, field, FolderIcon, ic, IconButton, KeyboardIcon, Menu, MenuItem, MenuLabel, MenuSeparator, ModelIcon, MoreIcon, PageIcon, PlanIcon, PlusIcon, Primary, RenameIcon, RestartIcon, SplitIcon, TasksIcon, TermIcon, XIcon } from '@client/ui.tsx'
 import { openAddSpace } from '@plugins/places/add.tsx'
 import { toast } from '@plugins/alerts/toasts.tsx'
 import { openKeybinds } from '@plugins/keyboard/client.tsx'
 import { DiffView, FilesView } from '@plugins/worktree/client.tsx'
-import type { Place, PlaceTab, Snapshot, Task, TabState } from '@shared/types.ts'
+import { resting, type Place, type PlaceTab, type Snapshot, type Task, type TabState } from '@shared/types.ts'
 import * as CF from '@core/confirm.js'
 import * as MNc from '@core/menus.js'
 import * as APc from '@core/autopilot.js'
+import * as RSc from '@core/settle.js'
+import * as Tc from '@core/toasts.js'
+import { restMenu, settleNow, unsettleNow, useRest, wakes } from '@plugins/tasks/rest.tsx'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const MN = MNc as any, AP = APc as any
+const MN = MNc as any, AP = APc as any, RS = RSc as any, T = Tc as any
 
 /** something the Herdr window does went wrong: said as the window's toasts say it */
 const failed = (title: string) => (e: Error) => toast({ title, body: e.message, level: 'error' })
@@ -178,6 +181,64 @@ function PhoneRunNow({ place }: { place: Place }) {
     >
       Run Autopilot now
     </MenuItem>
+  )
+}
+
+/** ASH-12: the Assistant as Settle and Snooze see it (rest.tsx): its chat, what a toast calls it, its rest now */
+const restingOf = (place: Place) => ({ chat: place.chat, what: T.assistantWho(place.name) as string, rest: place.rest, restUntil: place.restUntil })
+
+/** The header's Settle and Snooze (ASH-12, the window's pane header): ✓ settles the Assistant until new work (pressed
+ *  while settled: a click unsettles it), the clock opens restMenu() (Settle or Unsettle, Snooze's picks and a time typed,
+ *  Wake while snoozed). Quietly before them what it is now: "Wakes Today 18:00" while snoozed, "Woke" once its snooze
+ *  ran out (until its chat is seen). The Assistant's own tab with its agent running only; a phone has them in ⋯. */
+function RestHeader({ place }: { place: Place }) {
+  const phone = useUI((u) => u.device === 'phone')
+  const other = useUI((u) => !!u.term?.startsWith('t:'))
+  const [open, setOpen] = useState(false)
+  const close = () => setOpen(false)
+  const x = restingOf(place)
+  if (phone || other || !place.assistantTab?.live || !has('tasks')) return null
+  const settled = place.rest === 'settled'
+  const words = place.rest === 'snoozed' && place.restUntil ? wakes(place.restUntil) : place.woke ? RS.REST.woke : null
+  return (
+    <div data-rest className="relative flex shrink-0 items-center gap-0.5">
+      {words ? <span className="mr-1 text-[0.8125rem] whitespace-nowrap text-fg3 tabular-nums @max-[34rem]/place:hidden">{words}</span> : null}
+      <IconButton label={settled ? RS.REST.unsettle : RS.REST.settle} pressed={settled}
+        onClick={() => void (settled ? unsettleNow(x) : settleNow(x)).catch(failed(settled ? "It didn't unsettle" : "It didn't settle"))}>
+        <CheckIcon className={ic} />
+      </IconButton>
+      <IconButton label={RS.REST.snooze} aria-haspopup="menu" aria-expanded={open} pressed={place.rest === 'snoozed'} className="aria-expanded:bg-hover" onClick={() => setOpen(!open)}>
+        <ClockIcon className={ic} />
+      </IconButton>
+      {open ? (
+        <Menu label={RS.REST.snooze} onClose={close} className="absolute top-full right-0 z-21 mt-1.5 max-w-[calc(100vw-24px)] origin-top-right">
+          <RestItems place={place} close={close} />
+        </Menu>
+      ) : null}
+    </div>
+  )
+}
+
+/** restMenu()'s rows for the Assistant (the header's clock, a phone's ⋯), what herdr-task refused under them */
+function RestItems({ place, close }: { place: Place; close: () => void }) {
+  const rest = useRest(restingOf(place), close)
+  return (
+    <>
+      {restMenu({ rest: place.rest ?? null, snoozed: !!place.restUntil || !!place.woke }).map((it, i) => (it.sep ? <MenuSeparator key={`sep${i}`} /> : rest.item(it, i)))}
+      {rest.error ? <p role="alert" className="w-0 min-w-full px-2 pt-1 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{rest.error}</p> : null}
+    </>
+  )
+}
+
+/** A phone's ⋯: the Assistant's Settle and Snooze first (its header has no room for them) */
+function PhoneRest({ place }: { place: Place }) {
+  const other = useUI((u) => !!u.term?.startsWith('t:'))
+  if (other || !place.assistantTab?.live || !has('tasks')) return null
+  return (
+    <>
+      <RestItems place={place} close={() => setUI({ menu: false })} />
+      <MenuSeparator />
+    </>
   )
 }
 
@@ -459,7 +520,7 @@ const panels = {
 /** the Tasks button's count: everything that needs you and every Ready task, as the window's */
 function TasksCount() {
   const snap = useSnap()!
-  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready').length
+  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready' && !resting(t)).length
   return <AttentionBadge need={snap.needs.length} ready={ready} scope="everywhere" />
 }
 
@@ -688,6 +749,7 @@ function PhoneTabItems({ place }: { place: Place }) {
   const close = () => setUI({ menu: false })
   return (
     <>
+      <PhoneRest place={place} />
       <PhoneRunNow place={place} />
       <TabMenuItems place={place} tab={tab} close={close} />
       <MenuSeparator />
@@ -831,6 +893,8 @@ export default definePlugin({
     // the pane header: the name and folder on the left; on the right, in one row of 32px controls, the status in words,
     // the Autopilot pill and (the terminal plugin's, order 15) Chat | Terminal
     reg.placeHeader.push({ order: 12, View: StatusMark }, { order: 14, View: AutopilotHeader })
+    // ASH-12: Settle and Snooze, between the status and Autopilot
+    reg.placeHeader.push({ order: 13, View: RestHeader })
     reg.views.tabBar = TabBar
     reg.views.spacePanel = SpacePanel
     reg.overlays.push(CloseAssistant, TabRename, TabMenu, CloseSpace)
