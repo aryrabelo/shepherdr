@@ -5,15 +5,17 @@
 //   "filter"  the filter row's More: the statuses that don't get a chip of their own;
 //             props().items = [{ key, label, count }], props().current. A pick goes to the
 //             panel as shared "tasks.filterreq" = { key, at }.
-//   "row"     a task row's right-click: Pin or Unpin (props().on) the task props().key, in shared
-//             "tasks.pinned" (mods/tasks keeps the same list). A task not started yet (props().status
-//             todo, queued or scheduled) also starts later (SHEP-38): herdr-task edit --in / --at on
-//             props().machine, folder and ref; a scheduled one Start now and Unschedule. What herdr-task
-//             refuses shows as a toast. A task with a live agent is settled or snoozed here too (ASH-12,
-//             props().rest = { can, rest, snoozed }: rest.js runs herdr-task settle, unsettle, snooze, wake);
-//             pinning a snoozed one ends its snooze, settling a pinned one takes its pin (as T3's).
-//   "rest"    an Assistant's Snooze menu (mods/pane-chat's header): Settle or Unsettle, Snooze's times and
-//             Wake for its agent props().agent (core/menus.js restMenu); props().what names it in toasts.
+//   "row"     a task row's right-click (the Tasks panel's, the sidebar's threads: lib/taskthread.js openRowMenu): Pin
+//             or Unpin (props().on) the task props().key, in shared "tasks.pinned" (mods/tasks keeps the same list). A
+//             task not started yet (props().status todo, queued or scheduled) also starts later (SHEP-38): herdr-task
+//             edit --in / --at on props().machine, folder and ref; a scheduled one Start now and Unschedule. What
+//             herdr-task refuses shows as a toast. A task is settled here too (ASH-14: one with no live agent as well)
+//             and, with a live agent, snoozed (ASH-12, props().rest = { can (snooze), settle, rest, snoozed }: rest.js
+//             runs herdr-task settle, unsettle, snooze, wake); pinning a snoozed one ends its snooze, settling a pinned
+//             one takes its pin (as T3's).
+//   "rest"    an agent of its own's Snooze menu (an Assistant's header in mods/pane-chat, an agent's thread in the
+//             sidebar): Settle or Unsettle, Snooze's times and Wake for its agent props().agent (core/menus.js
+//             restMenu); props().what names it in toasts.
 // ↑/↓ move, Enter picks, Esc closes.
 
 import { View, div } from "gpui-kit";
