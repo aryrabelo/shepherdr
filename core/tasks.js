@@ -4,6 +4,7 @@
 // status) comes in as arguments, so nothing here reads Herdr.
 // Shared core: the source is core/tasks.js; bin/sync-shared copies it into the mods in lib/COPIES.
 import { REASONS } from "./needs.js";
+import { taskRest, REST } from "./settle.js";
 
 // An agent's own status, most urgent first.
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -112,7 +113,15 @@ export function retryLine(r, now = Date.now()) {
 // then its agents' own status.
 // helpers: its worker's own helper agents (SHEP-54: a reviewer it started as its hc child), never among live: one at
 // work or asking keeps the task Working (its worker waits on it; the worker answers what it asks), else they count not.
-export function place(list, task, { live = [], helpers = [], loaded = true, now = Date.now() } = {}) {
+// rest (ASH-12, core/settle.js taskRest): settled or snoozed by hand, from its live agents' labels (live entries carry
+// settled and snoozed: restFields()); its own shelf at the end of a list, and never news. null for a task not running.
+export function place(list, task, opts = {}) {
+  const p = placeOf(list, task, opts);
+  const r = p.live.length ? taskRest(task, p.live, opts.helpers ?? [], opts.now ?? Date.now()) : null;
+  return { ...p, rest: r?.rest ?? null, restInfo: r };
+}
+
+function placeOf(list, task, { live = [], helpers = [], loaded = true, now = Date.now() } = {}) {
   const st = task.state;
   if (!(st === "running" || st === "ready")) live = [];
   const status = live.reduce((s, a) => ((RANK[a.status] ?? 0) > (RANK[s] ?? 0) ? a.status : s), null);
@@ -241,6 +250,10 @@ export const short = (n) => (n < 1 ? "<1m" : n < 60 ? `${n}m` : `${Math.round(n 
 // doing (w: reportOf); Queued, what it waits for (queued: queueReason's words); Ready, since when.
 export function secondLine(p, w, queued = null, now = Date.now()) {
   const { section } = p;
+  // ASH-12: put away by hand says so; woke says so until looked at
+  if (p.rest === "snoozed") return wakesLine(p.restInfo?.until, now);
+  if (p.rest === "settled") return `${REST.settled} ${ago(p.restInfo?.at ?? now, true, now)}`;
+  if (p.restInfo?.woke && section !== "needs") return `${REST.woke} · ${secondLine({ ...p, restInfo: null }, w, queued, now) ?? STATUS[section] ?? ""}`.replace(/ · $/, "");
   return section === "needs" || section === "merging" ? p.why : section === "working" ? p.why ?? w?.text ?? null
     : section === "queued" ? queued
     : section === "scheduled" ? startsLine(p.task.scheduled_for, now)
@@ -271,3 +284,5 @@ export function untilShort(ms, now = Date.now()) {
 }
 // A scheduled row's second line: "Starts Today 18:00"; "Starts now" once due.
 export const startsLine = (ms, now = Date.now()) => (typeof ms !== "number" ? "Scheduled" : ms <= now ? "Starts now" : `Starts ${startsAt(ms, now)}`);
+// A snoozed row's second line: "Wakes Today 18:00" (ASH-12).
+export const wakesLine = (ms, now = Date.now()) => (typeof ms !== "number" ? REST.snoozed : `Wakes ${startsAt(ms, now)}`);

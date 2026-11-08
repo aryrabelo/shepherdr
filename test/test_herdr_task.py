@@ -3817,3 +3817,56 @@ class CodexAsksOnTheCard(unittest.TestCase):
         argv = launch.own_argv(["codex", "--sandbox", "workspace-write"])
         self.assertIn(f"timeout={launch.ASK_TIMEOUT}", argv[2])
         self.assertEqual(launch.ASK_TIMEOUT, 1800)
+
+
+class SettleRules(unittest.TestCase):
+    """ASH-12: herdr_task/settle.py keeps core/settle.js's rules (herdr-t3-inbox's labels): settled=<ms>:<turn>
+    stays until new work (a new turn, busy, a busy sub-agent); snoozed=<wake ms> hides until then, shows while
+    it asks or fails, wakes on time; neither is news."""
+
+    NOW = 1_800_000_000_000
+
+    def setUp(self):
+        sys.path.insert(0, BIN)
+        from herdr_task import settle
+        self.s = settle
+
+    def k(self, labels, turn=3, status="idle", role="worker"):
+        return {"address": "t1", "turn": turn, "status": status, "labels": {"herdr.role": role, **labels}}
+
+    def test_settled_until_new_work(self):
+        s, lab = self.s, {"settled": f"{self.NOW}:3"}
+        self.assertEqual(s.settled_value(3, self.NOW), f"{self.NOW}:3")
+        self.assertTrue(s.still_settled(self.k(lab), "idle"))
+        self.assertFalse(s.still_settled(self.k(lab, turn=4), "idle"))
+        self.assertFalse(s.still_settled(self.k(lab), "working"))
+        self.assertFalse(s.still_settled(self.k(lab), "idle", ["blocked"]))
+        self.assertTrue(s.stale(self.k(lab, turn=4), "idle")["settled"])
+
+    def test_snoozed_wakes_on_time_and_early_on_failure_or_needs_you(self):
+        s, lab = self.s, {"snoozed": str(self.NOW + 3600_000)}
+        self.assertTrue(s.hidden(self.k(lab), "working", [], self.NOW))
+        self.assertFalse(s.hidden(self.k(lab), "idle", [], self.NOW + 3600_001))
+        self.assertFalse(s.hidden(self.k(lab), "blocked", [], self.NOW))
+        self.assertFalse(s.hidden(self.k(lab), "error", [], self.NOW))
+        self.assertTrue(s.stale(self.k(lab), "error")["snoozed"])
+
+    def test_not_news(self):
+        s = self.s
+        self.assertTrue(s.not_news(self.k({"settled": f"{self.NOW}:3"}), "idle", [], self.NOW))
+        self.assertTrue(s.not_news(self.k({"snoozed": str(self.NOW + 60_000)}), "idle", [], self.NOW))
+        self.assertFalse(s.not_news(self.k({"snoozed": str(self.NOW + 60_000)}), "blocked", [], self.NOW))
+        self.assertFalse(s.not_news(self.k({}), "idle", [], self.NOW))
+
+    def test_task_rest(self):
+        s = self.s
+        settled = self.k({"settled": f"{self.NOW}:3"})
+        self.assertEqual(s.task_rest({}, [settled], [], self.NOW), {"rest": "settled", "at": self.NOW})
+        self.assertIsNone(s.task_rest({}, [self.k({"settled": f"{self.NOW}:3"}, turn=4)], [], self.NOW))
+        self.assertIsNone(s.task_rest({"attention": "x", "attention_at": self.NOW + 5}, [settled], [], self.NOW + 9))
+        self.assertEqual(s.task_rest({}, [settled, self.k({}, status="working", role="reviewer")], [], self.NOW)["rest"], "settled")
+        nap = self.k({"snoozed": str(self.NOW + 3600_000)})
+        self.assertEqual(s.task_rest({}, [nap], [], self.NOW), {"rest": "snoozed", "until": self.NOW + 3600_000})
+        self.assertEqual(s.task_rest({}, [dict(nap, status="blocked")], [], self.NOW)["showing"], True)
+        self.assertEqual(s.task_rest({}, [nap], [], self.NOW + 3600_001), {"rest": None, "woke": self.NOW + 3600_000})
+        self.assertIsNone(s.task_rest({}, [], [], self.NOW))

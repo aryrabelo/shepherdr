@@ -62,3 +62,4 @@ core/audio.js: chat
 core/text-select.js: chat
 usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 core/usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
+core/settle.js: chat jump tasks tasks-menu spaces-chat shepherdr-settings pane-chat tabs-tasks workspace-status-chat

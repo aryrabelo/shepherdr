@@ -1,0 +1,144 @@
+import { describe, expect, test } from "bun:test";
+import { settledValue, parseSettled, stillSettled, snoozedUntil, napping, woke, hidden, notNews, stale, taskRest, restFields, wordOf } from "./settle.js";
+import { place, secondLine } from "./tasks.js";
+import { isUnread } from "./spaces.js";
+import { notifiesBy } from "./notify.js";
+import { taskMenu, restMenu, SNOOZE_PICKS, SCHEDULE_PICKS } from "./menus.js";
+
+const NOW = 1_800_000_000_000;
+const term = (labels = {}, turn = 3, status = "idle") => ({ address: "t1", labels, turn, status, state: "live" });
+
+describe("settled (herdr-t3-inbox's contract: settled=<ms>:<turn>)", () => {
+  test("the label is <ms>:<turn>, and reads back", () => {
+    expect(settledValue(3, NOW)).toBe(`${NOW}:3`);
+    expect(parseSettled(`${NOW}:3`)).toEqual({ at: NOW, turn: 3 });
+    expect(parseSettled("")).toBeNull();
+    expect(parseSettled("x")).toBeNull();
+  });
+  test("stays settled while there's no new work; looking doesn't count", () => {
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "idle")).toBe(true);
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "done")).toBe(true);
+  });
+  test("a new turn brings it back", () => {
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 4), "idle")).toBe(false);
+  });
+  test("busy now (working or asking) brings it back", () => {
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "working")).toBe(false);
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "blocked")).toBe(false);
+  });
+  test("a busy sub-agent brings it back", () => {
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "idle", ["working"])).toBe(false);
+    expect(stillSettled(term({ settled: `${NOW}:3` }, 3), "idle", ["idle"])).toBe(true);
+  });
+  test("stale() says to clear a settle once there's new work", () => {
+    expect(stale(term({ settled: `${NOW}:3` }, 4), "idle").settled).toBe(true);
+    expect(stale(term({ settled: `${NOW}:3` }, 3), "idle").settled).toBe(false);
+  });
+});
+
+describe("snoozed (snoozed=<wake ms>)", () => {
+  test("hidden until it wakes, working or not", () => {
+    const k = term({ snoozed: String(NOW + 3600_000) });
+    expect(snoozedUntil(k)).toBe(NOW + 3600_000);
+    expect(hidden(k, "idle", [], NOW)).toBe(true);
+    expect(hidden(k, "working", [], NOW)).toBe(true);
+  });
+  test("wakes at its time, marked woke until looked at", () => {
+    const k = term({ snoozed: String(NOW - 1) });
+    expect(napping(k, NOW)).toBe(false);
+    expect(woke(k, NOW)).toBe(true);
+    expect(hidden(k, "idle", [], NOW)).toBe(false);
+  });
+  test("shows while it needs the person (asking), and on a failure", () => {
+    const k = term({ snoozed: String(NOW + 3600_000) });
+    expect(hidden(k, "blocked", [], NOW)).toBe(false);
+    expect(hidden(k, "idle", ["blocked"], NOW)).toBe(false);
+    expect(hidden(k, "error", [], NOW)).toBe(false);
+    expect(stale(k, "error").snoozed).toBe(true);
+    expect(stale(k, "idle").snoozed).toBe(false);
+  });
+  test("settled or snoozed isn't news; asking is", () => {
+    expect(notNews(term({ settled: `${NOW}:3` }), "idle", [], NOW)).toBe(true);
+    expect(notNews(term({ snoozed: String(NOW + 60_000) }), "idle", [], NOW)).toBe(true);
+    expect(notNews(term({ snoozed: String(NOW + 60_000) }), "blocked", [], NOW)).toBe(false);
+    expect(notNews(term({}), "idle", [], NOW)).toBe(false);
+  });
+  test("a status given as hc's { state } reads as a word", () => {
+    expect(wordOf({ status: { state: "blocked" } })).toBe("blocked");
+    expect(wordOf({ status: "idle" })).toBe("idle");
+  });
+});
+
+describe("a task's rest (its live agents' labels)", () => {
+  const agent = (k, more = {}) => ({ address: "t1", status: k.status, turn: k.turn, role: "worker", ...restFields(k), ...more });
+  test("settled while each live agent still is; a new turn or a busy helper brings it back", () => {
+    const k = term({ settled: `${NOW}:3` }, 3);
+    expect(taskRest({}, [agent(k)], [], NOW)).toEqual({ rest: "settled", at: NOW });
+    expect(taskRest({}, [agent(k, { turn: 4 })], [], NOW)).toBeNull();
+    expect(taskRest({}, [agent(k)], [{ status: "working" }], NOW)).toBeNull();
+  });
+  test("failing checks found after the settle are new work", () => {
+    const k = term({ settled: `${NOW}:3` }, 3);
+    expect(taskRest({ attention: "Checks failing", attention_at: NOW + 5 }, [agent(k)], [], NOW + 10)).toBeNull();
+    expect(taskRest({ attention: "Checks failing", attention_at: NOW - 5 }, [agent(k)], [], NOW + 10)?.rest).toBe("settled");
+  });
+  test("snoozed until it wakes; shows (not on the shelf) while it asks or fails", () => {
+    const k = term({ snoozed: String(NOW + 3600_000) });
+    expect(taskRest({}, [agent(k)], [], NOW)).toEqual({ rest: "snoozed", until: NOW + 3600_000 });
+    expect(taskRest({}, [agent(k, { status: "blocked" })], [], NOW)).toEqual({ rest: null, until: NOW + 3600_000, showing: true });
+    expect(taskRest({ attention: "Conflict" }, [agent(k)], [], NOW)?.rest).toBeNull();
+    expect(taskRest({}, [agent(k)], [], NOW + 3600_001)).toEqual({ rest: null, woke: NOW + 3600_000 });
+  });
+  test("a reviewer doesn't count", () => {
+    const k = term({ settled: `${NOW}:3` }, 3);
+    expect(taskRest({}, [agent(k), { address: "t2", status: "working", role: "reviewer" }], [], NOW)?.rest).toBe("settled");
+  });
+  test("place() carries it: a settled task that waited for a reply isn't on the Needs-you shelf", () => {
+    const list = { slug: "x", prefix: "X", folder: "/f", machine: null, tasks: [] };
+    const task = { id: 1, state: "running", started: NOW - 600_000 };
+    const k = term({ settled: `${NOW - 120_000}:3` }, 3);
+    const p = place(list, task, { live: [agent(k)], now: NOW });
+    expect(p.section).toBe("needs");
+    expect(p.rest).toBe("settled");
+    expect(secondLine(p, null, null, NOW)).toBe("Settled 2m ago");
+    const z = place(list, task, { live: [agent(term({ snoozed: String(NOW + 3600_000) }))], now: NOW });
+    expect(z.rest).toBe("snoozed");
+    expect(secondLine(z, null, null, NOW)).toMatch(/^Wakes /);
+    expect(place(list, { id: 2, state: "todo" }, { now: NOW }).rest).toBeNull();
+  });
+});
+
+describe("not news anywhere", () => {
+  const coord = (labels, turn = 5) => ({ address: "t9", state: "live", status: "idle", turn, labels: { "herdr.role": "coordinator", "herdr.chat.read": "3", ...labels } });
+  test("a settled Assistant isn't unread until a turn ends after the settle", () => {
+    expect(isUnread(coord({}), {}, 0, NOW)).toBe(true);
+    expect(isUnread(coord({ settled: `${NOW}:5` }), {}, 0, NOW)).toBe(false);
+    expect(isUnread(coord({ settled: `${NOW}:5` }, 6), {}, 0, NOW)).toBe(true);
+  });
+  test("a snoozed Assistant isn't unread until it wakes", () => {
+    expect(isUnread(coord({ snoozed: String(NOW + 60_000) }), {}, 0, NOW)).toBe(false);
+    expect(isUnread(coord({ snoozed: String(NOW - 1) }), {}, 0, NOW)).toBe(true);
+  });
+  test("a settled task's agent alerts nobody; asking still does", () => {
+    const k = { address: "t1", turn: 3, status: "idle", labels: { "herdr.task": "x#1", settled: `${Date.now()}:3` } };
+    expect(notifiesBy({}, k, "need")).toBe(false);
+    expect(notifiesBy({}, { ...k, status: "blocked" }, "need")).toBe(true);
+  });
+});
+
+describe("menus", () => {
+  test("Snooze offers Start later's picks", () => {
+    expect(SNOOZE_PICKS).toBe(SCHEDULE_PICKS);
+    expect(restMenu().filter((x) => x.id === "snooze").map((x) => x.label)).toEqual(["In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00"]);
+  });
+  test("Settle, or Unsettle once settled; Wake while snoozed", () => {
+    expect(restMenu()[0].id).toBe("settle");
+    expect(restMenu({ rest: "settled" })[0].id).toBe("unsettle");
+    expect(restMenu({ snoozed: true }).some((x) => x.id === "wake")).toBe(true);
+    expect(restMenu().some((x) => x.id === "wake")).toBe(false);
+  });
+  test("a task's menu has them only with a live agent", () => {
+    expect(taskMenu({ status: "working" }).some((x) => x.id === "settle")).toBe(false);
+    expect(taskMenu({ status: "working", rest: { can: true } }).some((x) => x.id === "settle")).toBe(true);
+  });
+});

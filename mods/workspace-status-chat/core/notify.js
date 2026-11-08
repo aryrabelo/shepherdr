@@ -8,6 +8,7 @@
 // set wins. These rules take s as an argument, so the window (lib/notify.js, shared "notify") and the service
 // and web app read it the same way.
 // Shared core: the source is core/notify.js; bin/sync-shared copies it into the mods in lib/COPIES.
+import { notNews, wordOf } from "./settle.js";
 
 export const NOTIFY = ["All", "Needs me", "Off"];
 export const NOTIFY_DEFAULT = "Needs me";
@@ -52,7 +53,9 @@ export function spaceOfTerminal(k) {
 
 // Does something from this agent reach the person: a task's always; else by its space's Notify.
 // kind: "message" (a new reply: only All) or "need" (a question, a permission, an alert).
+// A settled or snoozed agent (core/settle.js) reaches nobody until it needs the person or has new work.
 export function notifiesBy(s, k, kind) {
+  if (k?.labels && notNews(k, wordOf(k))) return false;
   if (k?.labels?.["herdr.task"]) return true;
   const space = spaceOfTerminal(k);
   const n = space ? spaceLevel(s, space) : everywhereOf(s);
