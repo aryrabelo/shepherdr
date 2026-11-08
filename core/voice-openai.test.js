@@ -1,10 +1,11 @@
 // OpenAI's voice (core/voice-openai.js): which voice a call takes, its session (the same prompt and Shepherdr tools as
 // the ElevenLabs agent, its language, its own end_call and skip_turn), one call's turns (tools answered, a spoken yes
-// still needed, the goodbye played out, a long silence), the 16 ↔ 24 kHz audio, and dictation's request.
+// still needed, the goodbye played out, a long silence; SHEP-113: what it is doing, the person's ask held before any
+// [Update]), the 16 ↔ 24 kHz audio, and dictation's request.
 import { expect, test, describe } from "bun:test";
 import { pickVoice, providerSetting, sessionUpdate, FUNCTIONS, realtimeCall, noteItem, resampler, openaiSttRequest, openaiTranscribe,
   openaiError, NO_VOICE_KEY, RATE, MODEL, realtimeUrl } from "./voice-openai.js";
-import { TOOLS, prompt, FIRST, SILENT_END_SECS, MAX_CALL_SECS, KEY_NAME, OPENAI_KEY_NAME, voiceKey, keyScript, KEY_SCRIPT, replyLine, statusLine, whereLine, dictateKeyError } from "./voice.js";
+import { TOOLS, prompt, FIRST, SILENT_END_SECS, MAX_CALL_SECS, KEY_NAME, OPENAI_KEY_NAME, voiceKey, keyScript, KEY_SCRIPT, replyLine, statusLine, whereLine, needLine, batchLines, dictateKeyError } from "./voice.js";
 
 const OKEY = "sk-proj-test0123456789abcdef0123456789abcdef";
 const EKEY = "sk_test_0123456789abcdef0123456789abcdef";
@@ -70,10 +71,15 @@ describe("which voice", () => {
 });
 
 describe("the session", () => {
-  const s = sessionUpdate("the Home Assistant", "Home on This computer").session;
-  test("the same prompt as the ElevenLabs agent, with its language and its own tools", () => {
-    expect(s.instructions.startsWith(prompt("the Home Assistant", "Home on This computer"))).toBe(true);
+  const s = sessionUpdate("Home on This computer").session;
+  test("the same prompt as the ElevenLabs agent (SHEP-105: a call with Shepherdr itself), with its language and its own tools", () => {
+    expect(s.instructions.startsWith(prompt("Home on This computer"))).toBe(true);
+    expect(s.instructions).toContain("The person called Shepherdr itself");
+    expect(s.instructions).toContain("Where the call is now: Home on This computer");
     expect(s.instructions).toContain("Brazilian Portuguese");
+    // ElevenLabs' language_detection tool isn't there: it switches by speaking
+    expect(s.instructions).toContain("There is no language_detection tool here");
+    expect(FUNCTIONS.some((f) => f.name === "language_detection")).toBe(false);
     expect(s.instructions).toContain("end_call");
     expect(s.instructions).toContain("Never end_call without that yes");
     expect(s.model).toBe(MODEL);
@@ -101,6 +107,11 @@ describe("the session", () => {
     expect(r.answer).toBe(true);
     expect(r.event.item.role).toBe("user");
     expect(noteItem(statusLine("x", "blocked", "Which branch?")).answer).toBe(true);
+    // SHEP-105: what the call hears anywhere, and several at once, as ElevenLabs is told them
+    expect(noteItem(needLine("the shop Assistant needs the person: Which port?")).answer).toBe(true);
+    const batch = batchLines([whereLine("Tasks"), replyLine("the shop Assistant", "Fixed."), replyLine("SHEP 45's agent", "Done.")]).map(noteItem);
+    expect(batch.map((n) => n.answer)).toEqual([false, true]);
+    expect(batch[1].event.item.content[0].text).toContain("2 things came in together");
     expect(noteItem(null)).toBeNull();
   });
 });
@@ -108,14 +119,15 @@ describe("the session", () => {
 /** a call with a fake socket and clock: what it sent, played, showed, and how it ended */
 function call(tools = {}) {
   let t = 0;
-  const sent = [], played = [], states = [], ends = [];
+  const sent = [], played = [], states = [], ends = [], said = [];
   let interrupts = 0;
   const rt = realtimeCall({
-    send: (m) => sent.push(m), audio: (b) => played.push(b), state: (s) => states.push(s), interrupt: () => interrupts++,
+    send: (m) => sent.push(m), audio: (b) => played.push(b), state: (s, doing) => states.push(doing ? `${s}: ${doing}` : s), interrupt: () => interrupts++,
+    said: (text) => said.push(text),
     tool: async (name, params) => (tools[name] ? tools[name](params) : { result: `no ${name}`, error: true }),
     end: (why) => ends.push(why), now: () => t,
   });
-  return { rt, sent, played, states, ends, interrupts: () => interrupts, at: (ms) => { t = ms; }, types: () => sent.map((m) => m.type) };
+  return { rt, sent, played, states, ends, said, interrupts: () => interrupts, at: (ms) => { t = ms; }, types: () => sent.map((m) => m.type) };
 }
 const fnCall = (name, args, id = `call_${name}`) => ({ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) });
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -123,7 +135,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 describe("a call", () => {
   test("opens with the session and its short first words, then listens", () => {
     const c = call();
-    c.rt.open("the Home Assistant", "Home");
+    c.rt.open("Home");
     expect(c.types()).toEqual(["session.update", "response.create"]);
     expect(c.sent[1].response.instructions).toContain(FIRST);
     expect(c.states).toEqual(["listening"]);
@@ -149,7 +161,8 @@ describe("a call", () => {
       { type: "conversation.item.create", item: { type: "function_call_output", call_id: "call_look", output: "Two spaces: Shop and Home." } },
       { type: "response.create" },
     ]);
-    expect(c.states).toContain("thinking");
+    // SHEP-113: what it was doing, in plain words, then its answer next
+    expect(c.states).toEqual(["working: checking spaces", "thinking"]);
   });
   test("an act without the spoken yes changes nothing: the voice is told to ask (confirmed false goes as asked)", async () => {
     const acts = [];
@@ -209,6 +222,42 @@ describe("a call", () => {
     c.rt.hear({ type: "response.done", response: { output: [fnCall("skip_turn", {}), fnCall("look", { what: "here" })] } });
     await flush();
     expect(c.types()).toEqual(["conversation.item.create", "conversation.item.create", "response.create"]);
+  });
+  test("SHEP-113: the person's ask holds [Update]s until it is answered, tools and all", async () => {
+    let done;
+    const c = call({ look: () => new Promise((r) => { done = () => r({ result: "Nothing is working." }); }) });
+    expect(c.rt.holding()).toBe(false);
+    c.rt.hear({ type: "input_audio_buffer.speech_started" });
+    c.rt.hear({ type: "input_audio_buffer.speech_stopped" });
+    expect(c.rt.holding()).toBe(true);
+    // "On it." then the tool: still owed while it runs
+    c.rt.hear({ type: "response.created" });
+    c.rt.hear({ type: "response.done", response: { output: [{ type: "message" }, fnCall("look", { what: "tasks", query: "working" })] } });
+    await flush();
+    expect(c.rt.holding()).toBe(true);
+    done();
+    await flush();
+    // its answer is next: still owed
+    expect(c.rt.holding()).toBe(true);
+    c.rt.hear({ type: "response.created" });
+    c.rt.hear({ type: "response.output_audio_transcript.done", transcript: " Nothing is working now. " });
+    c.rt.hear({ type: "response.done", response: { output: [{ type: "message" }] } });
+    expect(c.rt.holding()).toBe(false);
+    expect(c.said).toEqual(["Nothing is working now."]);
+    expect(c.states).toEqual(["listening", "thinking", "working: checking tasks", "thinking", "listening"]);
+  });
+  test("SHEP-113: a voice that never answers holds no longer than the gate's limit; skip_turn owes nothing", async () => {
+    const c = call();
+    c.at(1000);
+    c.rt.hear({ type: "input_audio_buffer.speech_stopped" });
+    expect(c.rt.holding(1000 + 29_000)).toBe(true);
+    expect(c.rt.holding(1000 + 31_000)).toBe(false);
+    const d = call();
+    d.rt.hear({ type: "input_audio_buffer.speech_stopped" });
+    d.rt.hear({ type: "response.done", response: { output: [fnCall("skip_turn", {})] } });
+    await flush();
+    expect(d.rt.holding()).toBe(false);
+    expect(d.states.at(-1)).toBe("listening");
   });
   test("OpenAI's own session running out ends the call cleanly, as a long one does", () => {
     const c = call();

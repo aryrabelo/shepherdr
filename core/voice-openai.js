@@ -4,11 +4,14 @@
 // (mods/chat/voice.ts, the machine's mic and speaker at 24 kHz) and the web's (service/voice.ts, the page's 16 kHz,
 // converted here). The voice is told the same prompt and has the same Shepherdr tools as the ElevenLabs agent
 // (core/voice.js prompt, TOOLS: look, open, send, screen, act with its spoken yes), plus end_call and skip_turn as
-// tools of its own. It speaks the person's language (Brazilian Portuguese too). Plain data and words: each side does
-// its own audio, files and sockets. Nothing is recorded or kept; the key is only ever in the socket's header.
+// tools of its own. It speaks the person's language (Brazilian Portuguese too). As the ElevenLabs call (SHEP-105, 113),
+// the call is with Shepherdr itself and hears what the side feeds it ([Update]s, service/voice-hear.ts), held while the
+// person's ask is still owed (holding(), core/voice.js turnGate), and says what it is doing ("working: checking tasks",
+// toolWords). Plain data and words: each side does its own audio, files and sockets. Nothing is recorded or kept; the
+// key is only ever in the socket's header.
 // Shared core: the source is core/voice-openai.js.
 
-import { prompt, TOOLS, FIRST, SILENT_END_SECS, MAX_CALL_SECS, KEY_NAME, OPENAI_KEY_NAME, DICTATE_NO_KEY, MAX_AUDIO } from "./voice.js";
+import { prompt, TOOLS, FIRST, SILENT_END_SECS, MAX_CALL_SECS, KEY_NAME, OPENAI_KEY_NAME, DICTATE_NO_KEY, MAX_AUDIO, toolWords, turnGate } from "./voice.js";
 
 export const OPENAI_API = "https://api.openai.com/v1";
 export const MODEL = "gpt-realtime";
@@ -54,11 +57,12 @@ export async function pickVoice(setting, find) {
 
 // ---- the session -----------------------------------------------------------------------------
 
-/** What the OpenAI voice is told beyond the shared prompt: its language, and its own two tools. */
+/** What the OpenAI voice is told beyond the shared prompt: its language (no language_detection tool here), and its
+ *  own two tools. */
 export const OPENAI_RULES = `
 
 On this call (OpenAI's voice):
-- Speak the language the person speaks, Brazilian Portuguese included, with the same short replies. Shepherdr's words (task ids, space names) stay as they are.
+- Speak the language the person speaks, Brazilian Portuguese included, with the same short replies. There is no language_detection tool here: switch by simply speaking their language, at once and any number of times. Shepherdr's words (task ids, space names) stay as they are.
 - Ending: ask the end question in their language; after a clear yes, say a one-word goodbye ("Bye." or "Tchau.") and use end_call. Never end_call without that yes.
 - When the person says to wait or hold on, or is clearly talking to someone else, use skip_turn and say nothing.
 - A change the person asks for (accept, start, stop, schedule, done, delete, Autopilot, a setting...) is act, never open: act with confirmed false first (it changes nothing and says what to ask), ask that, and after their clear yes act again with confirmed true.
@@ -71,11 +75,11 @@ export const FUNCTIONS = [
   { type: "function", name: "skip_turn", description: "Say nothing this turn: the person said to wait or hold on, or is clearly talking to someone else.", parameters: { type: "object", properties: {} } },
 ];
 
-/** The call's session: the prompt with where the call is, the tools, 24 kHz PCM both ways, the server hearing when the
- *  person speaks (and stopping the voice when they talk over it). */
-export const sessionUpdate = (who, where = "") => ({ type: "session.update", session: {
+/** The call's session: the prompt with where the call is (SHEP-105: a call with Shepherdr itself), the tools, 24 kHz
+ *  PCM both ways, the server hearing when the person speaks (and stopping the voice when they talk over it). */
+export const sessionUpdate = (where = "") => ({ type: "session.update", session: {
   type: "realtime", model: MODEL, output_modalities: ["audio"],
-  instructions: prompt(who, where) + OPENAI_RULES,
+  instructions: prompt(where) + OPENAI_RULES,
   audio: {
     input: { format: { type: "audio/pcm", rate: RATE }, noise_reduction: { type: "near_field" },
       turn_detection: { type: "server_vad", threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 600, create_response: true, interrupt_response: true } },
@@ -109,19 +113,23 @@ export const openaiError = (status, body) => {
  * One call's talk with the Realtime API, without its socket or audio. io:
  *   send(event)          an event to OpenAI's socket (an object; the side writes it as JSON)
  *   audio(b64)           24 kHz PCM of the voice to play, as base64
- *   state(s)             "listening" | "thinking" (the side shows it)
+ *   state(s, doing?)     "listening" | "thinking" | "working" (doing: what a tool does, in plain words; the side shows it)
+ *   said(text)           what the voice just said, written (the call card's last words; optional)
  *   interrupt()          the person talks over the voice: stop playing what it was saying
  *   tool(name, params)   Shepherdr's answer to a tool: { result, error? }
  *   end(why)             the call is over: why null for a clean end (its goodbye plays out first), else the words
  *   now()                ms (a test's clock)
- * Returns open(who, where) once the socket opens, hear(raw) for each message, note(line) for a [Update] line, mic(b64)
- * for 24 kHz PCM of the person, tick() about once a second (a long silence or an hour ends it).
+ * Returns open(where) once the socket opens, hear(raw) for each message, note(line) for a [Update] line, mic(b64)
+ * for 24 kHz PCM of the person, tick() about once a second (a long silence or an hour ends it), and holding(now):
+ * whether the person's ask is still owed an answer (SHEP-113: the side holds its [Update]s until it isn't).
  */
 export function realtimeCall(io) {
   const now = io.now ?? (() => Date.now());
   const started = now();
   let heardAt = started, active = false, want = false, ending = false, over = false, spoke = false;
   const answering = new Set();
+  // SHEP-113: the person's ask comes first, as with ElevenLabs' events (core/voice.js turnGate)
+  const turn = turnGate();
   const finish = (why) => { if (over) return; over = true; io.end(why); };
   /** a response from the voice, once the one it's giving is done */
   const respond = (extra) => {
@@ -132,16 +140,20 @@ export function realtimeCall(io) {
   };
   const calls = async (items) => {
     let more = false;
+    // the real tools' calls, before any runs: a turn holds until all are answered
+    for (const c of items) if (c.name !== "end_call" && c.name !== "skip_turn") turn.seen("client_tool_call", now());
     for (const c of items) {
       if (c.name === "end_call") { ending = true; io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: "The call is ending." } }); continue; }
       if (c.name === "skip_turn") { io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: "ok" } }); continue; }
       answering.add(c.call_id);
       let params = {};
       try { params = c.arguments ? JSON.parse(c.arguments) : {}; } catch {}
-      io.state("thinking");
+      // SHEP-113: the call shows what it is doing, in plain words ("working: checking tasks")
+      io.state("working", toolWords(String(c.name ?? ""), params ?? {}));
       let a;
       try { a = await io.tool(String(c.name ?? ""), params ?? {}); } catch (e) { a = { result: String(e?.message ?? e).slice(0, 500), error: true }; }
       answering.delete(c.call_id);
+      turn.seen("client_tool_result", now());
       if (over) return;
       io.send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: c.call_id, output: String(a?.result ?? "") } });
       more = true;
@@ -151,13 +163,15 @@ export function realtimeCall(io) {
       if (spoke) return finish(null);
       return respond({ instructions: "Say only a one-word goodbye in the person's language, like \"Bye.\", and nothing else." });
     }
-    // skip_turn keeps it quiet only when it was all that was asked: a tool's answer is still said
-    if (more) respond(true);
+    // skip_turn keeps it quiet only when it was all that was asked: a tool's answer is still said (its answer next)
+    if (more) { io.state("thinking"); respond(true); }
     else if (want) respond(want);
+    // only skip_turn: nothing is owed the person now
+    else { turn.seen("agent_response", now()); io.state("listening"); }
   };
   return {
-    open(who, where = "") {
-      io.send(sessionUpdate(who, where));
+    open(where = "") {
+      io.send(sessionUpdate(where));
       // what it says first: short, then it listens
       io.send({ type: "response.create", response: { instructions: `Say exactly "${FIRST}" and nothing else.` } });
       io.state("listening");
@@ -169,7 +183,12 @@ export function realtimeCall(io) {
       const t = String(m?.type ?? "");
       if (t === "response.output_audio.delta" && typeof m.delta === "string") { spoke = true; io.audio(m.delta); return; }
       if (t === "input_audio_buffer.speech_started") { heardAt = now(); io.interrupt(); io.state("listening"); return; }
-      if (t === "input_audio_buffer.speech_stopped") { heardAt = now(); io.state("thinking"); return; }
+      if (t === "input_audio_buffer.speech_stopped") { heardAt = now(); turn.seen("user_transcript", heardAt); io.state("thinking"); return; }
+      // what it said, written (both names: the GA event and the beta one)
+      if ((t === "response.output_audio_transcript.done" || t === "response.audio_transcript.done") && typeof m.transcript === "string") {
+        if (m.transcript.trim()) io.said?.(m.transcript.trim().slice(0, 300));
+        return;
+      }
       if (t === "response.created") { active = true; spoke = false; return; }
       if (t === "response.done") {
         active = false;
@@ -177,6 +196,7 @@ export function realtimeCall(io) {
         const out = Array.isArray(m.response?.output) ? m.response.output : [];
         const fn = out.filter((x) => x?.type === "function_call" && x.call_id);
         if (fn.length) { void calls(fn); return; }
+        turn.seen("agent_response", now());
         if (ending) return finish(null);
         io.state("listening");
         if (want) respond(want);
@@ -203,6 +223,8 @@ export function realtimeCall(io) {
       if (t - started > MAX_CALL_SECS * 1000) return finish(null);
       if (!active && !answering.size && t - heardAt > SILENT_END_SECS * 1000) finish(null);
     },
+    /** SHEP-113: the person's ask is still owed an answer (or a tool for it runs): [Update]s wait */
+    holding(t = now()) { return turn.holding(t); },
     get ending() { return ending; },
     get over() { return over; },
   };

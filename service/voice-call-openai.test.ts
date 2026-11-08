@@ -1,10 +1,12 @@
 // A web call through OpenAI's voice end to end, but for OpenAI: a fake Realtime socket gets the session (with the key
 // only in its header), asks the real call (voice.ts) for a tool that the page that started the call shows, hears the
 // page's 16 kHz microphone as 24 kHz, and its 24 kHz voice reaches the page as 16 kHz; its end_call after a goodbye ends
-// the call with no error.
+// the call with no error. SHEP-105/113 as with ElevenLabs: the call is with Shepherdr itself, hears the chats it sent to,
+// shows what it is doing, and holds [Update]s until the person's ask is answered.
 import { afterAll, expect, test } from "bun:test";
 import { voiceCall, type Voice } from "./voice.ts";
 import type { VoiceIO, Where } from "./voice-tools.ts";
+import type { HearIO } from "./voice-hear.ts";
 
 const KEY = "sk-proj-test0123456789abcdef0123456789abcdef";
 const now = Date.now();
@@ -16,6 +18,9 @@ const snap: any = {
   artifacts: [{ id: "hulk", title: "Hulk mini game · Proof", place: "h1", v: 1, at: now, when: "1m", by: "x" }],
 };
 const io: VoiceIO = { snap: () => snap, chat: async () => null, send: async () => {}, action: async () => ({ ok: true }) };
+const hear: HearIO = { snap: () => snap, view: () => null, follow: () => ({ stop: () => {} }) };
+const openaiDeps = { pick: async () => ({ provider: "openai", key: KEY }) as Voice,
+  dialOpenAI: (k: string) => ({ url: `ws://127.0.0.1:${server.port}/`, headers: { authorization: `Bearer ${k}` } }) };
 
 // the fake Realtime API: keeps what it was sent and the header it was opened with
 let oai: any = null, auth: string | null = null;
@@ -44,8 +49,7 @@ function phone() {
     },
     close() {},
     start(where: Where) {
-      call = voiceCall({} as any, "the Home Assistant", { view: { lastReply: () => null, status: () => null, asking: () => null }, io, where, follow: () => () => {},
-        pick: async () => ({ provider: "openai", key: KEY }) as Voice, dialOpenAI: (k) => ({ url: `ws://127.0.0.1:${server.port}/`, headers: { authorization: `Bearer ${k}` } }), navWait: 1000 }, p);
+      call = voiceCall({} as any, { io, hear, where, ...openaiDeps, navWait: 1000 }, p);
       return call;
     },
   };
@@ -61,7 +65,9 @@ test("an OpenAI call from a phone: its session, a tool shown on that phone, the 
   expect(got[0].type).toBe("session.update");
   expect(JSON.stringify(got[0])).not.toContain(KEY);
   expect(got[0].session.tools.map((t: any) => t.name)).toEqual(["look", "open", "send", "screen", "act", "end_call", "skip_turn"]);
-  expect(got[0].session.instructions).toContain("the Home Assistant");
+  // the same prompt as ElevenLabs' (SHEP-105: with Shepherdr itself), with where the call is
+  expect(got[0].session.instructions).toContain("The person called Shepherdr itself");
+  expect(got[0].session.instructions).toContain("Where the call is now:");
   expect(got[1].type).toBe("response.create");
 
   // the voice opens an artifact: it shows on this phone, then the voice is told it's on screen and answers
@@ -99,9 +105,44 @@ test("an OpenAI call from a phone: its session, a tool shown on that phone, the 
 test("no OpenAI key kept: the call says where to add it, and nothing is dialled", async () => {
   const msgs: any[] = [];
   const before = got.length;
-  voiceCall({} as any, "the Home Assistant", { view: { lastReply: () => null, status: () => null, asking: () => null }, io, where: { client: "web", call: "p:h1" } as Where, follow: () => () => {},
+  voiceCall({} as any, { io, hear, where: { client: "web", call: "p:h1" } as Where,
     pick: async () => ({ error: "Voice calls through OpenAI need an OpenAI key: add it in Settings › Secrets (as OPENAI_API_KEY, for Everywhere).", why: "none" }) }, { send: (x: any) => { if (typeof x === "string") msgs.push(JSON.parse(x)); }, close() {} });
   await until(() => msgs.some((m) => m.type === "error"));
   expect(msgs.find((m) => m.type === "error").message).toContain("OPENAI_API_KEY");
   expect(got.length).toBe(before);
 });
+
+test("SHEP-105/113 on OpenAI's voice: a send's chat is heard, the page sees what it does, its reply waits for the answer", async () => {
+  const box = { reply: null as null | { id: string; text: string; at?: number } };
+  const hearIO: HearIO = { snap: () => snap, view: (key) => (key === "p:h1" ? { lastReply: () => box.reply, status: () => "idle", asking: () => null } : null), follow: () => ({ stop: () => {} }) };
+  const msgs: any[] = [];
+  const sentTo: string[] = [];
+  oai = null;
+  const c = voiceCall({} as any, { io: { ...io, send: async (k) => { sentTo.push(k); } }, hear: hearIO, where: { client: "web", device: "phone", machine: "mini" }, ...openaiDeps },
+    { send: (x: any) => { if (typeof x === "string") msgs.push(JSON.parse(x)); }, close() {} });
+  await until(() => !!oai);
+  await Bun.sleep(50);
+  const states = () => msgs.filter((m) => m.type === "state").map((m) => (m.doing ? `${m.state}: ${m.doing}` : m.state));
+  const n = got.length;
+  // the person asks to pass something on: "On it." and the send
+  oai.send(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+  oai.send(JSON.stringify({ type: "response.created" }));
+  oai.send(JSON.stringify({ type: "response.done", response: { output: [{ type: "message" }, { type: "function_call", name: "send", call_id: "s1", arguments: JSON.stringify({ to: "home on this computer", text: "Check the build" }) }] } }));
+  await until(() => got.slice(n).some((m) => m.item?.type === "function_call_output"));
+  expect(sentTo).toEqual(["p:h1"]);
+  // the reply comes in before the voice has answered: held, even when all is quiet
+  box.reply = { id: "r1", text: "The build is green.", at: Date.now() };
+  await Bun.sleep(2600);
+  expect(got.slice(n).some((m) => m.item?.role === "user")).toBe(false);
+  // its answer, then the reply after it, told and answered
+  oai.send(JSON.stringify({ type: "response.created" }));
+  oai.send(JSON.stringify({ type: "response.output_audio_transcript.done", transcript: "Passed it to Home." }));
+  oai.send(JSON.stringify({ type: "response.done", response: { output: [{ type: "message" }] } }));
+  await until(() => got.slice(n).some((m) => m.item?.role === "user"));
+  const told = got.slice(n).find((m) => m.item?.role === "user");
+  expect(told.item.content[0].text).toContain('the Home Assistant replied: """The build is green."""');
+  expect(got.slice(n).at(-1)).toEqual({ type: "response.create" });
+  expect(msgs.filter((m) => m.type === "said")).toEqual([{ type: "said", text: "Passed it to Home." }]);
+  expect(states()).toEqual(["listening", "thinking", "working: sending to home on this computer", "thinking", "listening"]);
+  c.end();
+}, 10000);
