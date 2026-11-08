@@ -26,6 +26,8 @@ import { spaces, terminals, agents, inRender } from "./live.js";
 import { taskDot } from "./dot.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
 import { busyAgain, onIt } from "./core/tasks.js";
+// Settled or snoozed by hand (ASH-12): said so, never Needs you.
+import { taskRest, restFields, REST } from "./core/settle.js";
 // A space's name as the sidebar (and the web app) says it: never "~" (core/spaces.js).
 import { spaceName } from "./core/spaces.js";
 import { openViewer, showViewer, chatArea } from "./artview.js";
@@ -43,7 +45,8 @@ const ROW = 48, HEAD = 30, MORE = 32;
 const LIST_MAX = 420;
 // Task ids in a monospace column (JetBrains Mono: 0.6 em a character), so titles line up.
 const ID_FONT = "JetBrains Mono", ID_SIZE = TEXT.id, ID_CHAR = ID_SIZE * 0.6;
-const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done" };
+const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done",
+  settled: REST.settled, snoozed: REST.snoozed };
 
 // The Tasks panel's reads (tasklists.js: READ_LISTS, taskLists); every artifact registry the
 // same way.
@@ -175,13 +178,16 @@ export default class Jump extends View {
     const shown = new Map(agents().map((a) => [a.address, a]));
     return terminals().filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
       .filter((k) => k.program?.key !== "shell" && !k.program?.shell)
-      .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? k.status, turn: k.turn, role: k.labels?.["herdr.role"] ?? "worker" }));
+      .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? k.status, turn: k.turn, role: k.labels?.["herdr.role"] ?? "worker", ...restFields(k) }));
   }
 
   // A task's status as the Tasks panel names it, in short (its full rules: tasks/main.js place()).
   status(task, live) {
     const st = task.state;
     if (["todo", "queued", "scheduled", "done"].includes(st)) return st;
+    // Put away by hand (core/settle.js taskRest): Settled or Snoozed, whatever it would say otherwise.
+    const rest = live.length ? taskRest(task, live)?.rest : null;
+    if (rest) return rest;
     // A problem (failing checks) its agent is on (core/tasks.js onIt()): Working; nobody on it: Needs you.
     const fixing = task.attention && onIt(task, live);
     if ((task.attention && !fixing) || live.some((a) => a.status === "blocked")) return "needs";

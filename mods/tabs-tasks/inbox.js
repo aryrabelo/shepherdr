@@ -15,6 +15,10 @@
 //            told it to carry on after 1, 2, 4 and 8 minutes, and the fifth try was cut off too,
 //            or the error is one waiting can't fix (signed out, out of allowance)
 //
+// Settled or snoozed by hand (ASH-12, core/settle.js) isn't news: a task on one of those shelves is no item and no
+// green count (herdr-task list's rest, and its agents' labels now: a settle shows at once, not on the next read).
+// An agent asking is an item whatever its labels (settled can't ask; snoozed shows while it needs the person).
+//
 // Each item says why in at most 40 characters (reasonOf: as Shepherdr, a standard reason or the
 // agent's own question cut to fit, never its message pasted): the Tasks row, the red counts'
 // alerts and toasts say the same. A task's reason is herdr-task's (its why); an ask's comes from
@@ -34,6 +38,7 @@
 
 import { LINE_MAX, REASONS, fit, reqReason, reportReason } from "./core/needs.js";
 import { notifies, spaceOfTerminal } from "./notify.js";
+import { notNews, wordOf } from "./core/settle.js";
 import { toast, toastWho as whoOf } from "./ui.js";
 import { exec, appHome, home, focused, shared, setShared, watchFolder, readTextFile, writeTextFile, playSound, settings, run, layout } from "herdr";
 import { terminals, agents, panes, spaces } from "./live.js";
@@ -248,7 +253,8 @@ async function readTasksNow() {
       const last = x.agents?.[x.agents.length - 1];
       tasks.push({ kind, machine, folder: g.folder, name: g.name, ref: x.ref ?? `#${x.id}`, title: x.title, attention: x.attention ?? null, why: x.why ?? null,
         pr: x.pr ?? null, space: pre(machine, x.space), tab: pre(machine, x.tab), live: (x.live ?? []).map((a) => pre(machine, a.address)),
-        merging: Boolean(x.merge_requested && x.live?.length), at: x.ready_at ?? last?.ended ?? last?.at ?? x.started ?? x.created ?? 0 });
+        merging: Boolean(x.merge_requested && x.live?.length), at: x.ready_at ?? last?.ended ?? last?.at ?? x.started ?? x.created ?? 0,
+        rest: x.rest ?? null });
     }
     const auto = await json(CLI(), [...on, "auto", "list", "--all", "--json"]);
     for (const a of Array.isArray(auto) ? auto : []) if (a?.last_error)
@@ -304,7 +310,7 @@ export function items() {
   for (const k of all)
     if (k.state === "live" && k.status === "blocked" && !asking.has(k.address))
       out.push({ key: `blocked:${k.address}`, kind: "blocked", terminal: k.address, at: blockedSince(k.address) });
-  const tasks = shared("inbox.tasks") ?? [];
+  const tasks = (shared("inbox.tasks") ?? []).filter((x) => !resting(x, all));
   for (const x of tasks) if (x.kind !== "merge" && x.kind !== "asks") out.push({ key: `${x.kind}:${x.machine ?? ""}:${x.folder}:${x.ref}`, ...x });
   for (const p of shared("inbox.provider") ?? []) if (!asking.has(p.terminal)) out.push({ key: `provider:${p.terminal}`, kind: "provider", ...p });
   for (const a of shared("inbox.autos") ?? []) out.push({ key: `auto:${a.machine ?? ""}:${a.id}`, kind: "auto", ...a, at: a.error?.at ?? 0 });
@@ -345,7 +351,16 @@ export function countsByTab() {
 }
 
 // The tasks in Tasks' Ready, for the green counts (beside the red ones), and per tab.
-export const ready = () => (shared("inbox.tasks") ?? []).filter((x) => x.kind === "merge");
+export const ready = () => { const all = terminals(); return (shared("inbox.tasks") ?? []).filter((x) => x.kind === "merge" && !resting(x, all)); };
+
+// A task on the Settled or Snoozed shelf: its own agents' labels now (reviewers don't count: theirs is the worker's
+// turn), else herdr-task's word on its last read. New trouble (its attention) is news unless herdr-task already
+// weighed it against the settle.
+function resting(x, all) {
+  const own = (x.live ?? []).map((a) => all.find((k) => k.address === a)).filter((k) => k?.state === "live" && k.labels?.["herdr.role"] !== "reviewer");
+  if (!own.length) return Boolean(x.rest);
+  return (Boolean(x.rest) || !x.attention) && own.every((k) => notNews(k, wordOf(k)));
+}
 export const readyCount = () => ready().length;
 export function readyByTab() {
   const m = new Map();
