@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sendBody, steerNow, messageBody, refusal, reactionLine, mentionedIn, taskTag } from "../core/send.js";
 import { kindOf } from "../core/chat-reader.js";
-import { WORDS } from "../core/chat-view.js";
+import { WORDS, rewinds } from "../core/chat-view.js";
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
 const { sessionOf, forkArgv } = AGa as any;
@@ -546,7 +546,9 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (t?.status?.state === "working") throw new Error("The agent is working: stop it first, then rewind.");
     const users = (r?.conv?.items ?? []).filter((x: any) => x.kind === "user" && !x.from && !/^\//.test(x.text ?? ""));
     const i = users.findIndex((u: any) => u.id === b.message), back = i < 0 ? 1 : users.length - i;
-    if ((kindOf(t) ?? "claude") === "claude") { await hub.send(a, "/rewind"); await Bun.sleep(700); await hc(["keys", a, ...Array(back).fill("up")]); }
+    const kind = kindOf(t) ?? "claude";
+    if (!rewinds(kind)) throw new Error("Rewind it in its terminal: omp's /branch picks the message.");
+    if (kind === "claude") { await hub.send(a, "/rewind"); await Bun.sleep(700); await hc(["keys", a, ...Array(back).fill("up")]); }
     else { await hc(["keys", a, "esc", "esc"]); await Bun.sleep(500); if (back > 1) await hc(["keys", a, ...Array(back - 1).fill("left")]); }
     return { ok: true, terminal: true };
   }
@@ -559,6 +561,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // a copy of the conversation in a new tab of its space, through the CLI's own fork (the window makes the tab)
     const a = chat(b.chat), t: any = hub.terminals.get(a), r = compat.reader?.(a);
     const kind = kindOf(t) ?? "claude", session = sessionOf(kind, r?.path ?? null);
+    if (!rewinds(kind)) throw new Error("Fork it in its terminal: omp's /fork.");
     if (!session) throw new Error("This conversation has no saved session to fork.");
     const space = ["herdr.space", "herdr.task.space", "herdr.coordinator.space"].map((k) => t?.labels?.[k]).find(Boolean);
     const res = await run(["herdr-app", "do", "tab.new", ...(space ? ["--space", space] : []), "--folder", t?.foreground?.cwd ?? t?.cwd ?? "", "--argv", JSON.stringify(forkArgv(kind, t?.foreground?.argv ?? t?.argv ?? [], session))]);

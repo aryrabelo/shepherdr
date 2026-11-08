@@ -10,14 +10,10 @@ import { sh } from "./model.ts";
 import * as AG from "../core/agents.js";
 import { kindOf } from "../core/chat-reader.js";
 
-const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvFor, sessionOf, NAMES, line, PICKS_FILE, parsePicks, pickKey, withPin, withRecent, AGENT_KEYS, PERM_DEFAULT } = AG as any;
+const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvFor, sessionOf, NAMES, line, PICKS_FILE, parsePicks, pickKey, withPin, withRecent, AGENT_KEYS, PERM_DEFAULT, rolePerms } = AG as any;
 const KEYS: string[] = AGENT_KEYS;
-/** the CLI a terminal runs: the chat's kinds (core/chat-reader.js), and omp, which the chat can't read yet (its status
- *  app, or herdr-task's herdr.agent label) */
-const cliOf = (t: any): string | null => kindOf(t) ?? (t?.status?.app === "omp" || t?.labels?.["herdr.agent"] === "omp" ? "omp" : null);
-/** the CLIs a terminal can be restarted on: omp only for a task's agent (herdr-task switch), not an Assistant, whose
- *  chat can't read omp's log */
-const keysFor = (t: any, kind: string) => KEYS.filter((k) => k !== "omp" || kind === "omp" || Boolean(t?.labels?.["herdr.task"]));
+/** the CLI a terminal runs: the chat's kinds (core/chat-reader.js: claude, codex, omp), or herdr-task's herdr.agent label */
+const cliOf = (t: any): string | null => kindOf(t) ?? (t?.labels?.["herdr.agent"] === "omp" ? "omp" : null);
 const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
 
 async function run(cmd: string[]) {
@@ -82,9 +78,11 @@ export class Agents {
     if (t.created_ms && meta.at && meta.at < t.created_ms) meta = { used: meta.used, window: meta.window };
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], meta, dflts[kind]);
     const row = rowFor(kind, c);
-    const menus = Object.fromEntries(keysFor(t, kind).filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
+    const menus = Object.fromEntries(KEYS.filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
     return { current: { agent: kind, model: row, effort: c.effort ?? null, fast: !!c.fast, perm: c.perm ?? null }, menus,
-      permDefault: { ...PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }, picks: this.picks(), offline: machine && !(await this.reachable(machine)) ? machine : null };
+      // an Assistant's own modes when another CLI is picked (core/agents.js rolePerms: Claude Code's Auto)
+      permDefault: rolePerms(t.labels?.["herdr.task"] ? "worker" : "coordinator", { ...PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }),
+      picks: this.picks(), offline: machine && !(await this.reachable(machine)) ? machine : null };
   }
 
   /** whether another machine answers now (hc machine ls: connected) */
@@ -127,7 +125,7 @@ export class Agents {
     const kind = cliOf(t) ?? "claude";
     const dflt: any = await this.allDefaults(machine);
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], reader?.conv?.meta ?? {}, dflt[kind]);
-    const clis = keysFor(t, kind).map((k) => {
+    const clis = KEYS.map((k) => {
       const m = menuFor(k, dflt[k], k === kind ? c.model : null);
       return { kind: k, name: NAMES[k], models: m.models.map((x: any) => ({ id: x.id, label: x.name, efforts: x.efforts, ...(x.defaultEffort ? { defaultEffort: x.defaultEffort } : {}) })),
         speeds: m.models.some((x: any) => x.fast) ? ["normal", "fast"] : ["normal"] };
@@ -142,10 +140,12 @@ export class Agents {
     if (!t || t.state !== "live") throw new Error("That agent isn't running.");
     const kind = cliOf(t) ?? "claude";
     const old = { agent: kind, argv: t.foreground?.argv ?? t.argv ?? [], session: sessionOf(kind, reader?.path ?? null) };
-    const built = argvFor({ agent: pick.kind, model: pick.model, effort: pick.effort, fast: pick.speed === "fast", perm: pick.perm ?? current(kind, old.argv, {}, {}).perm }, old);
-    const pane = t.labels?.["herdr.chat"] ?? "";
     const task = t.labels?.["herdr.task"];
-    if (pick.kind === "omp" && !task && kind !== "omp") throw new Error("omp runs task agents and reviewers for now, not an Assistant.");
+    // no mode picked: the same CLI keeps its own; another CLI starts on its default for the role (one CLI's mode means
+    // nothing to another: "manual" isn't an omp --approval-mode)
+    const perm = pick.perm ?? (pick.kind === kind ? current(kind, old.argv, {}, {}).perm : rolePerms(task ? "worker" : "coordinator", PERM_DEFAULT)[pick.kind] ?? null);
+    const built = argvFor({ agent: pick.kind, model: pick.model, effort: pick.effort, fast: pick.speed === "fast", perm }, old);
+    const pane = t.labels?.["herdr.chat"] ?? "";
     if (task) {
       const r = await run(["herdr-task", "switch", task, "--folder", t.foreground?.cwd ?? t.cwd, "--argv", JSON.stringify(built.base), "--json"]);
       let out: any = {};

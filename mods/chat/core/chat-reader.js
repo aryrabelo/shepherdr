@@ -9,9 +9,11 @@ import { BgJobs } from "./bg-jobs.js";
 
 export const PAGE = 200;
 export const KEEP = 2000;
-export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
+// Herdr's name for the CLI (status.app) or the program in front: omp also as omp-safe, a wrapper that runs it in a
+// sandbox (Herdr names that one omp too).
+export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex", omp: "omp", "omp-safe": "omp" };
 
-// The CLI a terminal runs, as the chat knows them ("claude", "codex"), else null.
+// The CLI a terminal runs, as the chat knows them ("claude", "codex", "omp"), else null.
 export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? null;
 
 export class ChatReader {

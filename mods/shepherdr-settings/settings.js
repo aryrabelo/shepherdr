@@ -20,25 +20,32 @@ import * as fs from "fs/promises";
 import * as agent from "./agent.js";
 // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
 import { modelLabel, choicesFrom } from "./core/settings.js";
-import { AGENT_KEYS, FULL_PERM } from "./core/agents.js";
+import { AGENT_KEYS, FULL_PERM, rolePerms } from "./core/agents.js";
 
 const ROW = 31, LABEL = 110;
 const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
 const LAST = () => `${appHome()}/data/coordinator-last.json`;
 
 // What the agents on this machine (or `machine`) offer: { menus, icons, installed, permDefault,
-// defaults } (defaults: the CLI's own, for a first time). omp only with `tasks` (Settings' task agent and
-// reviewer rows): an Assistant (the New space dialog, a new chat) runs Claude Code or Codex, whose logs its chat reads.
-export async function loadChoices(machine = null, { tasks = false } = {}) {
+// defaults } (defaults: the CLI's own, for a first time). omp too: its model list comes from a cache
+// (core/agents.js DEFAULTS), so a menu doesn't wait for it, and an Assistant on omp has its chat (ASH-16).
+export async function loadChoices(machine = null) {
   const [claude, codex, omp, known] = await Promise.all([agent.defaults("claude", machine), agent.defaults("codex", machine),
-    tasks ? agent.defaults("omp", machine) : null, knownAgents({ on: machine }).catch(() => [])]);
+    agent.defaults("omp", machine), knownAgents({ on: machine }).catch(() => [])]);
   const prog = (k) => known.find((a) => a.key === k || (a.run ?? [])[0] === k);
   // omp, when Herdr doesn't list it: installed once it lists its models
   const installed = Object.fromEntries(AGENT_KEYS.map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude" || (k === "omp" && Boolean(omp?.models?.length))]));
-  if (!tasks) installed.omp = false;
   const icons = Object.fromEntries(AGENT_KEYS.map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
   const { menus, permDefault, defaults } = choicesFrom({ claude, codex, omp }, installed);
   return { menus, icons, installed, permDefault, defaults };
+}
+
+// The same for a new Assistant (the New space dialog, an Assistant's empty chat): its own permission modes
+// (core/agents.js rolePerms: Claude Code's Auto), in what it starts from and in another CLI picked.
+export async function loadAssistantChoices(machine = null) {
+  const data = await loadChoices(machine);
+  const permDefault = rolePerms("coordinator", data.permDefault);
+  return { ...data, permDefault, defaults: { ...data.defaults, perm: permDefault[data.defaults.agent] ?? data.defaults.perm } };
 }
 
 // The last choice made (data/coordinator-last.json) when it still fits what is offered, else

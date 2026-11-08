@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import * as S from "./settings.js";
+import * as A from "./agents.js";
 
 const ROOT = join(import.meta.dir, "..");
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
@@ -48,7 +49,7 @@ test("the model button says what the window's does", () => {
     .toMatchObject({ agent: "codex", model: "gpt-5", effort: null, perm: "full" });
 });
 
-test("omp is offered as a task agent and reviewer once it lists its models (ASH-2)", () => {
+test("omp is offered to every role once it lists its models (ASH-2, ASH-16)", () => {
   const omp = { models: [{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: ["low", "high"] }] };
   const c = S.choicesFrom({ claude: { model: "opus", per: {} }, codex: {}, omp }, { claude: true, codex: true, omp: true });
   expect(c.menus.omp.name).toBe("omp");
@@ -56,13 +57,13 @@ test("omp is offered as a task agent and reviewer once it lists its models (ASH-
   expect(S.modelLabel(c.menus, { agent: "omp", model: "anthropic/claude-opus-5-5", effort: "high" })).toBe("Claude Opus 5.5 · High");
   // not installed: not offered
   expect(S.choicesFrom({ claude: {}, codex: {}, omp }, { claude: true, codex: true }).menus.omp).toBeUndefined();
-  // the Assistant's menu leaves omp out (its chat can't read omp's log); task agents and reviewers keep it
-  expect(Object.keys(S.roleMenus("coordinator", c.menus))).not.toContain("omp");
-  expect(Object.keys(S.roleMenus("worker", c.menus))).toContain("omp");
-  // an Assistant's own pickers (a new chat, the New space dialog) load the choices without omp; Settings asks for it
-  expect(read("lib/settings.js")).toContain("if (!tasks) installed.omp = false;");
-  expect(read("mods/chat/main.js")).toMatch(/loadChoices\(space\?\.machine \?\? null\)/);
-  expect(read("mods/shepherdr-settings/main.js")).toContain("loadChoices(null, { tasks: true })");
+  // the Assistant too (its chat reads omp's log since ASH-16): no role leaves it out, every picker loads it
+  expect(S.roleMenus).toBeUndefined();
+  expect(S.TASK_ONLY).toBeUndefined();
+  expect(read("lib/settings.js")).not.toContain("installed.omp = false");
+  expect(read("mods/chat/main.js")).toMatch(/loadAssistantChoices : choices\.loadChoices\)\(space\?\.machine \?\? null\)/);
+  expect(read("mods/shepherdr-settings/main.js")).toContain("loadChoices(null)");
+  expect(read("service/settings.ts")).not.toContain("not the Assistant");
   // omp's reviewer by default: Claude Code
   expect(S.otherCli("omp")).toBe("claude");
   expect(S.roleSel("reviewer", null, c, "omp")).toMatchObject({ unset: true, sel: { agent: "claude" } });
@@ -71,6 +72,30 @@ test("omp is offered as a task agent and reviewer once it lists its models (ASH-
     .toMatchObject({ agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" });
   expect(S.chooseModel(c.menus, c.permDefault, { agent: "omp", model: "anthropic/claude-opus-5-5", perm: "yolo" }, "claude", "opus"))
     .toMatchObject({ agent: "claude", perm: "bypassPermissions" });
+});
+
+test("a new Assistant starts on Auto (Claude Code) or Full access (omp), workers on their CLI's own (ASH-16)", () => {
+  const omp = { models: [{ id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", efforts: [] }] };
+  // Claude Code's own default mode ("default", the chat's "manual") asks before each command
+  const c = S.choicesFrom({ claude: { model: "opus", per: {}, mode: null }, codex: {}, omp }, { claude: true, codex: true, omp: true });
+  expect(c.permDefault.claude).toBe("manual");
+  expect(S.roleSel("coordinator", null, c, "claude")).toMatchObject({ unset: true, sel: { agent: "claude", perm: "auto" } });
+  expect(S.roleSel("worker", null, c, "claude")).toMatchObject({ unset: true, sel: { agent: "claude", perm: "manual" } });
+  // a pick in Settings stays as picked (Full access stays an option)
+  expect(S.roleSel("coordinator", { agent: "claude", model: "opus", perm: "bypassPermissions" }, c, "claude").sel.perm).toBe("bypassPermissions");
+  // another CLI picked on the Assistant's button: its own Assistant mode
+  const pd = A.rolePerms("coordinator", c.permDefault);
+  expect(pd).toMatchObject({ claude: "auto", codex: "auto", omp: "yolo" });
+  expect(S.chooseModel(c.menus, pd, { agent: "omp", model: "anthropic/claude-opus-5-5", perm: "write" }, "claude", "opus").perm).toBe("auto");
+  expect(A.rolePerms("worker", c.permDefault)).toBe(c.permDefault);
+  // what it runs: claude --permission-mode auto; omp --approval-mode yolo
+  expect(A.argvFor({ agent: "claude", model: "opus", perm: "auto" }, { agent: null, argv: [] }).argv).toContain("auto");
+  expect(A.argvFor({ agent: "omp", model: "a/b", perm: pd.omp }, { agent: null, argv: [] }).argv).toEqual(["omp", "--model", "a/b", "--approval-mode", "yolo"]);
+  // started without a pick (the web, a new space without the window): the template's own command
+  expect(read("templates/assistant.md")).toMatch(/^command: claude --permission-mode auto$/m);
+  // the web's restart menu and the window's model menu offer the Assistant's modes too
+  expect(read("service/agents.ts")).toContain('rolePerms(t.labels?.["herdr.task"] ? "worker" : "coordinator"');
+  expect(read("mods/chat/main.js")).toContain("agent.rolePerms(this.role,");
 });
 
 test("Backup's warning, an add-on's line and Web's state, in the window's words", () => {

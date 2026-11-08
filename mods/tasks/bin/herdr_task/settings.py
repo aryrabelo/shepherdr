@@ -512,8 +512,13 @@ def agent_argv(key, argv_json=None):
     return argv
 
 
+# Wrappers that run a CLI as it is (its arguments intact), named as that CLI: omp-safe runs omp in a sandbox.
+WRAPPERS = {"omp-safe": "omp"}
+
+
 def agent_key(argv):
-    return os.path.basename(argv[0])
+    k = os.path.basename(argv[0])
+    return WRAPPERS.get(k, k)
 
 
 def bare(i):

@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LOG, Conversation, records, pilotLine, sendsOf } from "./chat-log.js";
+import { FIND, LOG, Conversation, records, pilotLine, sendsOf, resultText } from "./chat-log.js";
+import { kindOf } from "./chat-reader.js";
+import { argvFor, ompProgram, sessionOf } from "./agents.js";
 
 // A Claude Code log as LOG reads it, fed to a Conversation.
 async function read(lines) {
@@ -255,4 +257,105 @@ test("a template's example news lines are words, real news lines are news (#589)
   expect(c.items[2]).toMatchObject({ ref: "SHOP-2", event: "ready" });
   // a real tag holding code is still Herdr's: hidden whole, the words around it shown
   expect(c.items[3].text).toBe("And look at `<herdr-news>` too");
+});
+
+// ---- omp (ASH-16) --------------------------------------------------------------------------------------------------
+
+test("two omp agents in one folder each get their own log: the file each process holds, else its lock's", () => {
+  const home = mkdtempSync(join(tmpdir(), "omp-find-")), bin = join(home, "bin");
+  const dir = join(home, ".omp", "agent", "sessions", "-repo");
+  mkdirSync(bin); mkdirSync(dir, { recursive: true }); mkdirSync(join(home, ".omp", "run", "session-owners"), { recursive: true });
+  const A1 = "01a1bd5a-0000-7000-8000-00000000000a", B1 = "01a1bd5a-0000-7000-8000-00000000000b";
+  const a = join(dir, `2026-11-08T10-00-00-000Z_${A1}.jsonl`), b = join(dir, `2026-11-08T10-00-01-000Z_${B1}.jsonl`);
+  writeFileSync(a, ""); writeFileSync(b, ""); // b is the newer: never taken for a
+  // 100: the wrapper's shell (omp-safe), its child 101 the omp holding a (and a subagent's log one folder deeper);
+  // 200: an omp between writes, holding only its lock; 300: an omp with no session yet
+  writeFileSync(join(bin, "pgrep"), `#!/bin/sh\n[ "$2" = 100 ] && echo 101\ntrue\n`);
+  writeFileSync(join(bin, "lsof"), `#!/bin/sh
+case "$2" in
+101) printf 'p101\\nn${dir}/2026-11-08T10-00-00-000Z_${A1}/Helper.jsonl\\nn${a}\\nn${home}/.omp/run/session-owners/${A1}.lock\\n' ;;
+200) printf 'p200\\nn/dev/ttys001\\nn${home}/.omp/run/session-owners/${B1}.lock\\n' ;;
+esac
+true\n`);
+  chmodSync(join(bin, "pgrep"), 0o755); chmodSync(join(bin, "lsof"), 0o755);
+  const find = (pid) => Bun.spawnSync(["sh", "-c", FIND, "find", "omp", String(pid)], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home } }).stdout.toString().trim();
+  try {
+    expect(find(100)).toBe(a);
+    expect(find(200)).toBe(b);
+    expect(find(300)).toBe("pending");
+    // Herdr names omp-safe's terminal omp; a wrapper's program name counts too
+    expect(kindOf({ status: { app: "omp" }, foreground: { name: "zsh" } })).toBe("omp");
+    expect(kindOf({ foreground: { name: "omp-safe" } })).toBe("omp");
+    expect(sessionOf("omp", a)).toBe(A1);
+  } finally { rmSync(home, { recursive: true }); }
+});
+
+const ompLine = (role, content, more = {}) => ({ type: "message", id: `m${n++}`, parentId: null, timestamp: at, runtime: { version: "18" }, message: { role, content, ...more } });
+async function readOmp(lines) {
+  const dir = mkdtempSync(join(tmpdir(), "chat-log-omp-"));
+  const f = join(dir, "s.jsonl");
+  writeFileSync(f, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  const out = await new Response(Bun.spawn(["sh", "-c", LOG, "log", "tail", f, "0"], { stdout: "pipe", stderr: "ignore" }).stdout).text();
+  const c = new Conversation("omp");
+  c.feed(records(out).records);
+  return { c, f, dir };
+}
+
+test("an omp log reads as a conversation: messages, its steps, its question, your answer, the turn's end", async () => {
+  const call = (id, name, args, intent) => ({ type: "toolCall", id, name, arguments: args, ...(intent ? { intent } : {}) });
+  const { c, f, dir } = await readOmp([
+    { type: "session", version: 3, id: "x", timestamp: at, cwd: "/repo" },
+    { type: "model_change", id: "1", parentId: null, timestamp: at, model: "anthropic/claude-opus-5-5" },
+    { type: "thinking_level_change", id: "2", parentId: "1", timestamp: at, thinkingLevel: "high" },
+    { type: "custom_message", customType: "eager-todo-prelude", content: "<system-reminder>plan first</system-reminder>", id: "3", parentId: "2", timestamp: at },
+    ompLine("user", [{ type: "text", text: '<hc from="person" reaction="👍" to="Done before"/>\nCheck the tests' }], { attribution: "user" }),
+    ompLine("assistant", [{ type: "thinking", thinking: "hmm", thinkingSignature: "Ep".repeat(4000) }, { type: "text", text: "Looking." },
+      call("t1", "bash", { command: "bun test", i: "Running the tests" }), call("t2", "read", { path: "/repo/core/a.js" }),
+      call("t3", "edit", { input: "[core/a.js#1A2B]\nPUT 1.=1:\n+x\n[core/b.js#3C4D]\nCUT 2.=2\n" })],
+      { model: "claude-opus-5-5", provider: "anthropic", usage: { input: 10, cacheRead: 900, cacheWrite: 80, output: 10 }, stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "3 pass" }], { toolCallId: "t1", toolName: "bash", details: {}, isError: false }),
+    ompLine("toolResult", [{ type: "text", text: "x" }], { toolCallId: "t2", toolName: "read" }),
+    ompLine("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t3", toolName: "edit" }),
+    ompLine("assistant", [call("q1", "ask", { questions: [{ id: "a", question: "Merge it?", options: [{ label: "Yes" }, { label: "No" }] }] })], { stopReason: "toolUse" }),
+  ]);
+  try {
+    expect(c.items.map((x) => x.kind)).toEqual(["user", "agent", "tools", "ask"]);
+    expect(c.items[0].text).toBe("Check the tests");
+    expect(c.items[1].text).toBe("Looking.");
+    expect(c.items[2].steps.map((s) => s.line)).toEqual(["Running the tests: bun test", "Read core/a.js", "Edited core/a.js, core/b.js"]);
+    expect(c.items[3]).toMatchObject({ text: "Merge it?\n- Yes\n- No" });
+    expect(c.doing).toBe("Asking you something");
+    expect(c.meta).toMatchObject({ model: "anthropic/claude-opus-5-5", effort: "high", used: 1000 });
+    // a step's output, fetched when its row opens
+    const off = c.items[2].steps[0].out;
+    const res = Bun.spawnSync(["sh", "-c", LOG, "log", "results", f, String(off)]).stdout.toString().split("\x1e").pop().replace(/^\d+\n/, "");
+    expect(resultText(res, "t1")).toBe("3 pass");
+  } finally { rmSync(dir, { recursive: true }); }
+  // the answer: words typed show as yours, an option picked doesn't; then its reply ends the turn
+  const done = await readOmp([
+    ompLine("assistant", [call("q1", "ask", { questions: [{ id: "a", question: "Merge it?", options: [{ label: "Yes" }] }] })], { stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "User provided custom input: after the checks" }], { toolCallId: "q1", toolName: "ask",
+      details: { question: "Merge it?", options: ["Yes"], selectedOptions: [], customInput: "after the checks" } }),
+    ompLine("assistant", [{ type: "text", text: "Merging after the checks." }], { stopReason: "stop" }),
+    ompLine("user", [{ type: "text", text: "stop" }]),
+    ompLine("assistant", [call("t9", "bash", { command: "sleep 600" })], { stopReason: "toolUse" }),
+    ompLine("assistant", [], { stopReason: "aborted", errorMessage: "Interrupted by user" }),
+  ]);
+  try {
+    const items = done.c.items;
+    expect(items.map((x) => x.kind)).toEqual(["ask", "user", "agent", "user", "tools"]);
+    expect(items[0].closed).toBe("answered");
+    expect(items[1]).toMatchObject({ text: "after the checks", answer: true });
+    expect(done.c.doing).toBeNull();
+    expect(done.c.open.size).toBe(0);
+  } finally { rmSync(done.dir, { recursive: true }); }
+});
+
+test("an omp agent restarts on its session and its own program (omp-safe stays)", () => {
+  const argv = ["/bin/zsh", "/usr/local/bin/omp-safe", "--model", "a/b", "--approval-mode", "yolo"];
+  expect(ompProgram(argv)).toBe("/usr/local/bin/omp-safe");
+  expect(argvFor({ agent: "omp", model: "a/c", perm: "yolo" }, { agent: "omp", argv, session: "S1" }))
+    .toEqual({ argv: ["/usr/local/bin/omp-safe", "--model", "a/c", "--approval-mode", "yolo", "--resume", "S1"], resume: true, base: ["/usr/local/bin/omp-safe", "--model", "a/c", "--approval-mode", "yolo"] });
+  // from another CLI: plain omp, a new session
+  expect(argvFor({ agent: "omp", model: "a/c" }, { agent: "claude", argv: ["claude"], session: "S2" })).toMatchObject({ argv: ["omp", "--model", "a/c"], resume: false });
 });

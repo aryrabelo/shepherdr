@@ -28,6 +28,11 @@ const PERMS = {
 // Each CLI's full access, and the mode a new agent gets unless picked (Claude Code's: its settings' mode).
 export const FULL_PERM = { claude: "bypassPermissions", codex: "full", omp: "yolo" };
 export const PERM_DEFAULT = { codex: "auto", omp: "yolo" };
+// A new Assistant's mode unless picked (ASH-16): Claude Code's Auto, never its own default mode, which asks before each
+// command, and an Assistant runs read-only ones all the time (herdr-task show, gh pr list, git status).
+export const ASSISTANT_PERM = { claude: "auto" };
+// The modes a new agent of a role gets unless picked (role: Settings' coordinator, worker or reviewer).
+export const rolePerms = (role, permDefault) => (role === "coordinator" ? { ...permDefault, ...ASSISTANT_PERM } : permDefault);
 // omp's thinking levels (--thinking), for a model that doesn't list its own.
 const OMP_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -368,6 +373,12 @@ export function freshArgv(kind, argv) {
   return resumed ? out.filter((x) => x !== undefined) : null;
 }
 
+// The omp program an agent's argv runs: `omp`, or the omp-safe wrapper (a script that runs omp in a sandbox, its
+// arguments intact; Herdr shows its shell's argv: ["/bin/zsh", "/…/omp-safe", …]), as written there; else null.
+export function ompProgram(argv) {
+  return (argv ?? []).map(String).find((a) => /^(omp|omp-safe)$/.test(a.split("/").pop())) ?? null;
+}
+
 // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
 // `session`: the old conversation's id when it can be resumed (same agent only).
 export function argvFor(pick, old) {
@@ -384,11 +395,13 @@ export function argvFor(pick, old) {
     return { argv: a, resume: false, base: a };
   }
   if (pick.agent === "omp") {
-    // as herdr-task's argv_for: --model, --thinking, --approval-mode; no session carried over
-    const a = ["omp"];
+    // as herdr-task's argv_for: --model, --thinking, --approval-mode; the same session again (--resume, as herdr-task's
+    // resume_argv), and the same program: a wrapper it ran in (omp-safe) stays
+    const a = [(same && ompProgram(old.argv)) || "omp"];
     if (pick.model) a.push("--model", pick.model);
     if (pick.effort) a.push("--thinking", pick.effort);
     if (pick.perm) a.push("--approval-mode", pick.perm);
+    if (same && old.session) return { argv: [...a, "--resume", old.session], resume: true, base: a };
     return { argv: a, resume: false, base: a };
   }
   // Codex runs its commands outside hc without --no-daemon (as herdr-task and restart.sh add).

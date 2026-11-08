@@ -171,3 +171,13 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Element | Window | Web | State |
 |---|---|---|---|
 | Opens over the chat, pages through its images | chat-image main.js | C:593 Photo | ◇ full screen with swipe and pinch on a phone |
+
+## omp's chat (ASH-16)
+
+| Element | Window | Web | State |
+|---|---|---|---|
+| Its log found by the process (the session file it holds, else its owner lock), two in one folder apart | mods/chat locate() → core/chat-log.js FIND | core/chat-reader.js locate() | ✓ same script |
+| Messages, steps (its intent words), ask questions with options, your written answers, turn end, errors | core/chat-log.js Conversation.omp() | the same | ✓ |
+| / list with omp's commands | core/slash.js OMP | service/main.ts commandList | ✓ |
+| Rewind and Fork under its messages | none (core/chat-view.js rewinds) | none (rows.tsx Band) | ✓ both leave them out |
+| Chat or Terminal on an omp tab | mods/pane-chat chatty | plugins/terminal/client.tsx | ✓ |

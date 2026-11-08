@@ -47,8 +47,8 @@ function folder(cwd) {
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 }
 
-// Chat reads Claude Code's and Codex's own session logs; other agents have no chat.
-const chatty = (p) => Boolean(p?.terminal) && (["claude-code", "codex"].includes(p.app) || ["claude", "codex"].includes(p.program?.key));
+// Chat reads Claude Code's, Codex's and omp's own session logs; other agents have no chat.
+const chatty = (p) => Boolean(p?.terminal) && (["claude-code", "codex", "omp"].includes(p.app) || ["claude", "codex", "omp"].includes(p.program?.key));
 
 const chatPanes = () => new Set(panes().filter((p) => p.mod === CHAT).map((p) => p.pane));
 // The chat pane showing a terminal, if one is open.
