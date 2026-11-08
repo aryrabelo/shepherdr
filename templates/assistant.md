@@ -70,7 +70,7 @@ a subject, you are its coordinator here, and each task is one of its threads.
   and who owes it (you, a worker, CI, the person, someone outside). The Tasks list shows a task's latest one as its
   second line.
 - Waiting on something outside (a client, a deploy, another team) for hours or days: snooze it for real
-  (`herdr-task snooze HAT-7 --at "10/11 9:00"`, or `--agent` for an Assistant's chat) **and** end with
+  (`herdr-task snooze HAT-7 --at "2026-11-10 09:00"` or `--at "tomorrow 9:00"`, or `--agent` for an Assistant's chat) **and** end with
   `Soneca até dd/mm: motivo. Ao acordar: X` instead. The line alone is not a snooze.
 - Merging is always the person's: never merge or turn on auto-merge for them.
 

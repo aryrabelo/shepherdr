@@ -2,6 +2,7 @@
 a throwaway) its commands start. On a person's machine herdr-task never runs with another HOME."""
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -4216,3 +4217,16 @@ class NextLine(unittest.TestCase):
         self.assertIsNone(self.agents.next_line(self.task(("it", "All good."))))
         self.assertIsNone(self.agents.next_line(self.task(("it", "```\nPróximo: not this\n```"))))
         self.assertIsNone(self.agents.next_line({"agents": []}))
+
+    def test_the_templates_snooze_times_are_ones_herdr_task_takes(self):
+        # The Assistant copies them: an example herdr-task refuses ("10/11 9:00") is a snooze that never happens.
+        from herdr_task import when
+        found = []
+        for name in ("assistant.md", "worker.md"):
+            with open(os.path.join(ROOT, "templates", name), encoding="utf-8") as f:
+                text = f.read()
+            for line in re.findall(r"herdr-task snooze [^`\n]*", text):
+                found += [at for at in re.findall(r'--at "([^"]+)"', line) if "<" not in at]
+        self.assertTrue(found)
+        for at in found:
+            when.parse_at(at, now_ms=0)
