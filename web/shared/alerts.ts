@@ -2,7 +2,7 @@
 // worker and the screen. An iPhone shows no buttons on an alert, so its words alone must let you decide from the lock
 // screen: the title says the task and what it needs, the body the question or the card's choices.
 import { excerpt } from './excerpt.ts'
-import { machineName, splitFacts, taskChatId, type Alert, type Chat, type Message, type Question, type Snapshot } from './types.ts'
+import { machineName, resting, splitFacts, taskChatId, type Alert, type Chat, type Message, type Question, type Snapshot } from './types.ts'
 import * as T from '../../core/toasts.js'
 
 /** about what an iPhone's lock screen shows of a title (one line) and of a body (a few lines) */
@@ -31,10 +31,11 @@ export const askTag = (place: string) => `ask:${place}`
  *  Ready task) and the tag of each thing, so alerts about what no longer waits can go */
 export function waiting(snap: Pick<Snapshot, 'places' | 'tasks' | 'asks' | 'needs'>): { count: number; tags: string[] } {
   const places = new Set(snap.places.map((p) => p.id))
-  const tasks = snap.tasks.filter((t) => places.has(t.place) && !t.archived && (t.status === 'need' || t.status === 'ready')).map((t) => t.id)
+  // settled or snoozed (ASH-12) waits on nobody
+  const tasks = snap.tasks.filter((t) => places.has(t.place) && !t.archived && !resting(t) && (t.status === 'need' || t.status === 'ready')).map((t) => t.id)
   const asks = Object.keys(snap.asks).filter((p) => places.has(p) && snap.asks[p]).map(askTag)
   const needs = snap.needs.filter((n) => places.has(n.place))
-  const ready = snap.tasks.filter((t) => places.has(t.place) && !t.archived && t.status === 'ready')
+  const ready = snap.tasks.filter((t) => places.has(t.place) && !t.archived && !resting(t) && t.status === 'ready')
   return { count: needs.length + ready.length, tags: [...tasks, ...asks] }
 }
 

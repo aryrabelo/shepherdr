@@ -6,14 +6,14 @@ import { expire, loadOutbox, prune, saveOutbox, settle, type Outgoing } from './
 import { HttpError, wakeAll } from './uploads.ts'
 import { keptOf, mayReload, type Kept } from './reload.ts'
 import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
-import { groupFor, groupTasks, loadAllDone, loadGroups, loadShut, keepTasks, namesFor, saveAllDone, saveGroups, saveShut, shownGroup, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
+import { groupFor, groupTasks, loadAllDone, loadGroups, loadShut, keepTasks, namesFor, saveAllDone, saveGroups, saveShut, shownGroup, SETTLED, SETTLED_OPEN, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
 import { canDock, CHAT_READ, fit as fitSidebars, focused, loadSidebars, PANEL, RIGHT, saveSidebars, showPanel, toggleFocus as focusTo, type Sidebars } from './sidebars.ts'
 import { hush } from './motion.ts'
 import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
 import { setupGuarded } from './guard.tsx'
 import { followOff, note as noteUsage, noteAct, noteView, startUsage } from './usage.ts'
 import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
-import { machineName, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
+import { machineName, resting, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
 
 /* ---------- slots ---------- */
 
@@ -1104,6 +1104,19 @@ export function scheduleTask(t: Task, when: { at?: string; in?: string; off?: bo
   return act({ type: 'schedule', chat: t.agent?.chat ?? `${t.id}/Agent`, ...when })
 }
 
+/** what herdr-task answers a settle, unsettle, snooze or wake (ASH-12): was_snoozed (task or agent -> its snooze's wake
+ *  ms) puts a snooze back on Undo; until and when, a snooze's wake time */
+export type RestAnswer = { ok?: boolean; error?: string; was_snoozed?: Record<string, number>; until?: number; when?: string }
+
+/** ASH-12 Settle and Snooze on a chat: a task's (its agent's key: its live agents) or an Assistant's (its place's chat).
+ *  snooze: { in } or { at } in herdr-task's words; unsettle: snoozeUntil puts back a snooze that hasn't run out */
+export function restChat(chat: string, type: 'settle' | 'unsettle' | 'snooze' | 'wake', more: { in?: string; at?: string; snoozeUntil?: number } = {}): Promise<RestAnswer> {
+  return act({ type, chat, ...more })
+}
+
+/** a task's chat key, as its row menu's actions name it */
+export const taskChat = (t: Task) => t.agent?.chat ?? `${t.id}/Agent`
+
 /** pause a working task: its agent is interrupted and the task is To do until written to */
 export function pauseTask(t: Task) {
   return act({ type: 'pause', chat: t.agent?.chat ?? `${t.id}/Agent` })
@@ -1155,7 +1168,7 @@ export { GROUPS, groupChoices, groupFor, keepTasks, namesFor, type GroupBy, type
 export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy): TaskGroup[] {
   const tasks = tasksIn(snap, list)
   if (list.attention) return snap.places.flatMap((p) => (['need', 'ready'] as const).flatMap((status) => {
-    const rows = tasks.filter((t) => t.place === p.id && t.status === status)
+    const rows = tasks.filter((t) => t.place === p.id && t.status === status && !resting(t))
     return rows.length ? [{ key: `${p.id}|${status}`, label: `${p.name} · ${status === 'need' ? 'Needs you' : 'Ready'}`, note: machineName(snap.machines, p.machine), tasks: rows, names: { machine: false, project: false } }] : []
   }))
   return groupTasks(snap.places, snap.machines ?? [], tasks, by, list.level)
@@ -1163,6 +1176,7 @@ export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy): TaskGro
 
 /** For you's Done: shut until opened ("done:open" in shut), its count showing alone */
 export const DONE_OPEN = 'done:open'
+export { SETTLED, SETTLED_OPEN, SNOOZED } from './groups.ts'
 
 /** a list's task groups as this screen shows them: grouped as this device chose, Done cut short until Show all, a
  *  group folded shut showing none of its tasks (For you's Done shut until opened) */
@@ -1170,7 +1184,8 @@ export function shownGroups(snap: Snapshot, list: ListView, ui: Pick<UI, 'groups
   const shut = (key: string) => ui.shut.includes(`${list.key}|${key}`)
   const all = (key: string) => ui.allDone.includes(`${list.key}|${key}`)
   const by = groupFor(ui.groups, list.level)
-  return taskGroups(snap, list, by).map((g) => shownGroup(g, all(g.key), by === 'you' && g.key === 'done' ? !shut(DONE_OPEN) : shut(g.key)))
+  // Settled (ASH-12) is folded until opened, in every grouping
+  return taskGroups(snap, list, by).map((g) => shownGroup(g, all(g.key), by === 'you' && g.key === 'done' ? !shut(DONE_OPEN) : g.key === SETTLED ? !shut(SETTLED_OPEN) : shut(g.key)))
 }
 
 /** fold a heading of a list's tasks shut or open ("group", "m:machine"); with siblings, them too, the same way */
@@ -1338,7 +1353,7 @@ export function listView(ui: UI, snap: Snapshot): ListView {
 
 /** what waits on you in a list: its tasks that need you or are ready */
 export function listWaiting(snap: Snapshot, list: ListView) {
-  return tasksIn(snap, list).filter((t) => t.status === 'need' || t.status === 'ready').length
+  return tasksIn(snap, list).filter(actionable).length
 }
 
 /** a chip's words: a space's "# gtm" (with its machine where there are more: "# gtm · vm-str"), a machine's name */

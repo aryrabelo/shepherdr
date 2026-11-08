@@ -72,3 +72,37 @@ describe("the window's grouping (core/tasks.js groupNow)", () => {
     expect(from({ 'tasks.group': 'status', 'tasks.groupby': 'space' })).toBe('status')
   })
 })
+
+describe('Settle and Snooze shelves (ASH-12)', () => {
+  const shelf = () => [
+    task('a:shep', 'need'),
+    task('a:shep', 'need', { rest: 'settled', restAt: 10 }),
+    task('a:tor', 'work', { rest: 'snoozed', restUntil: 900 }),
+    task('b:gtm', 'ready', { rest: 'snoozed', restUntil: 500 }),
+    task('b:gtm', 'work', { rest: 'settled', restAt: 30, pinned: 1 }),
+    task('a:shep', 'done', { doneAt: 5 }),
+  ]
+  test('Snoozed (soonest first) then Settled (latest first) at the very end, in every grouping, in no other group', () => {
+    for (const by of ['you', 'project', 'status'] as const) {
+      const gs = groupTasks(places, machines, shelf(), by, 0)
+      expect(gs.slice(-2).map((g) => [g.key, g.label, g.tasks.map((t) => t.restUntil ?? t.restAt)])).toEqual([
+        ['snoozed', 'Snoozed', [500, 900]],
+        ['settled', 'Settled', [30, 10]],
+      ])
+      // a task on a shelf is nowhere else: not For you, Needs you, Ready, Pinned or its space
+      const before = gs.slice(0, -2).flatMap((g) => g.tasks)
+      expect(before.some((t) => t.rest)).toBe(false)
+      expect(gs.some((g) => g.key === 'pinned')).toBe(false)
+      // their rows say their space, as far as the view doesn't
+      expect(gs.at(-1)!.names).toEqual({ machine: false, project: true })
+    }
+  })
+  test('only when they hold some; archived ones are on neither', () => {
+    expect(groupTasks(places, machines, [task('a:shep', 'work')], 'you', 0).map((g) => g.key)).toEqual(['a:shep'])
+    expect(groupTasks(places, machines, [task('a:shep', 'work', { rest: 'settled', archived: 3 })], 'you', 0)).toEqual([])
+  })
+  test('Settled shows only its count while shut', () => {
+    const settled = groupTasks(places, machines, shelf(), 'status', 0).at(-1)!
+    expect(shownGroup(settled, false, true)).toMatchObject({ key: 'settled', count: 2, tasks: [] })
+  })
+})

@@ -4,8 +4,12 @@
 // then one list per space. Status: one group per status (Needs you, Ready, Merging, Working, Queued, To do, Done; the
 // empty ones left out), each row saying its space. The machine is never a group: a space's heading names it only when
 // two machines have a space of that name. Each level (more machines', one machine's) keeps its choice, remembered on
-// this device.
-import { doneNewestFirst, type Machine, type Place, type Task } from '@shared/types.ts'
+// this device. In every grouping, tasks put away by hand (ASH-12 Settle and Snooze) are in two groups of their own at
+// the very end, and in no other: Snoozed (soonest to wake first), then Settled (latest first; folded until opened).
+import { doneNewestFirst, resting, type Machine, type Place, type Task } from '@shared/types.ts'
+import * as RS from '@core/settle.js'
+
+const REST = RS.REST as { snoozed: string; settled: string }
 
 export type GroupBy = 'you' | 'project' | 'status'
 export type Groups = { all: GroupBy; machine: GroupBy }
@@ -120,8 +124,29 @@ export interface TaskGroup {
  * level: the view's (0 All machines, 1 a machine, 2 a space), which says what its rows needn't.
  */
 export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by: GroupBy, level = 1): TaskGroup[] {
+  const live = ts.filter((t) => !t.archived)
+  return [...groupAwake(places, machines, live.filter((t) => !resting(t)), by, level), ...restGroups(live, level)]
+}
+
+/** ASH-12 (core/settle.js REST_GROUPS): the shelves at the very end, Snoozed (soonest to wake first) then Settled (latest
+ *  first), each only when it holds some; their rows say their space as far as the view doesn't */
+export function restGroups(ts: Task[], level = 1): TaskGroup[] {
+  const snoozed = ts.filter((t) => t.rest === 'snoozed').sort((a, b) => (a.restUntil ?? 0) - (b.restUntil ?? 0))
+  const settled = ts.filter((t) => t.rest === 'settled').sort((a, b) => (b.restAt ?? 0) - (a.restAt ?? 0))
+  return [
+    ...(snoozed.length ? [{ key: SNOOZED, label: REST.snoozed, tasks: snoozed, names: namesFor(level) }] : []),
+    ...(settled.length ? [{ key: SETTLED, label: REST.settled, tasks: settled, names: namesFor(level) }] : []),
+  ]
+}
+
+/** the shelves' keys (also what folds them: Settled is shut until opened, SETTLED_OPEN) */
+export const SNOOZED = 'snoozed'
+export const SETTLED = 'settled'
+export const SETTLED_OPEN = 'settled:open'
+
+function groupAwake(places: Place[], machines: Machine[], ts: Task[], by: GroupBy, level: number): TaskGroup[] {
   // archived tasks are in no group: only their place's Archived view shows them
-  const all = doneNewestFirst(GROUPS.flatMap(([s]) => ts.filter((t) => t.status === s && !t.archived)))
+  const all = doneNewestFirst(GROUPS.flatMap(([s]) => ts.filter((t) => t.status === s)))
   if (by === 'you') {
     const mine = all.filter((t) => t.status === 'need' || t.status === 'ready')
     const pinned = all.filter((t) => t.pinned && !mine.includes(t))

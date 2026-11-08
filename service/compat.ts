@@ -55,6 +55,15 @@ function headerPilot(a: any) {
 }
 
 
+/** ASH-12: what a task's or an Assistant's rest (core/settle.js taskRest / service/model.ts assistantRest) gives the
+ *  screen: rest (settled | snoozed), when it was settled (restAt) or wakes (restUntil, also while it shows because it
+ *  needs you), and woke (its snooze ran out, not looked at yet). */
+export function restOf(r: { rest?: string | null; at?: number | null; until?: number; woke?: number } | null | undefined) {
+  if (!r) return {};
+  return { ...(r.rest === "settled" || r.rest === "snoozed" ? { rest: r.rest as "settled" | "snoozed" } : {}),
+    ...(r.rest === "settled" && r.at ? { restAt: r.at } : {}), ...(r.until ? { restUntil: r.until } : {}), ...(r.woke ? { woke: r.woke } : {}) };
+}
+
 export const placeKey = (spaceId: string) => `p:${spaceId.replace("/", ":")}`;
 export const taskId = (r: Row) => (r.machine ? `${r.machine}:${r.ref}` : r.ref);
 
@@ -205,7 +214,7 @@ export class Compat {
   /** chat key -> terminal address, from the last build */
   private chats = new Map<string, string>();
   /** task id -> where herdr-task finds it */
-  private tasks = new Map<string, { ref: string; folder: string; machine: string | null; key: string; pin: string; where: Where }>();
+  private tasks = new Map<string, { ref: string; folder: string; machine: string | null; key: string; pin: string; where: Where; snoozed: boolean }>();
 
   taskOf(id: string) { return this.tasks.get(id) ?? null; }
 
@@ -355,13 +364,15 @@ export class Compat {
       // machine's too, as its own window shows it); the space's folder until it has one
       const live = ak?.foreground?.cwd ?? ak?.cwd;
       const cwd = live ? (s.machine ? SPc.tilde(live) : shortHome(live)) : null;
-      return { id: s.id, name, ...(!s.name || s.name === "~" ? { unnamed: true } : {}), ...(s.icon ? { emoji: s.icon } : {}),...(s.git ? { git: s.git.linked ? "linked" : "main", repo: s.git.repo, gitName: s.git.name, branch: s.git.branch ?? null } : {}), ...(s.git?.linked ? { worktree: true } : {}), machine: s.machine ?? host, level: 0, status: AGENT[s.assistantStatus] ?? "idle", mode: s.autopilot ? "autopilot" : "regular", chat: key, header, where, ...(cwd ? { cwd } : {}), assistantTab, ...(s.pilot ? { pilot: headerPilot(s.pilot) } : {}),store: artifactStore(s as any), ...((s as any).changedAt ? { changedAt: (s as any).changedAt } : {}),...(tabs.length ? { tabs } : {}) };
+      return { id: s.id, name, ...(!s.name || s.name === "~" ? { unnamed: true } : {}), ...(s.icon ? { emoji: s.icon } : {}),...(s.git ? { git: s.git.linked ? "linked" : "main", repo: s.git.repo, gitName: s.git.name, branch: s.git.branch ?? null } : {}), ...(s.git?.linked ? { worktree: true } : {}), machine: s.machine ?? host, level: 0, status: AGENT[s.assistantStatus] ?? "idle", mode: s.autopilot ? "autopilot" : "regular", chat: key, header, where, ...(cwd ? { cwd } : {}), assistantTab, ...(s.pilot ? { pilot: headerPilot(s.pilot) } : {}),store: artifactStore(s as any), ...((s as any).changedAt ? { changedAt: (s as any).changedAt } : {}),...(tabs.length ? { tabs } : {}), ...restOf(s.assistantRest) };
     });
 
     // every agent's own helper agents (SHEP-54): their chats open by t:<address>, as a tab's
     for (const k of (this as any).terminalsAll?.() ?? []) if (isHelper(k)) chats.set(`t:${k.address}`, k.address);
     this.tasks = new Map(rows.map((r) => [taskId(r), { ref: r.ref, folder: r.folder, machine: r.machine ?? null, key: `${r.slug}#${r.id}`, pin: r.key,
-      where: { folder: r.worktree, machine: r.machine ?? null, base: r.base, start: r.start, branch: r.branch, pr: r.pr } }]));
+      where: { folder: r.worktree, machine: r.machine ?? null, base: r.base, start: r.start, branch: r.branch, pr: r.pr },
+      // ASH-12: a snooze set on it (running out or not, or showing while it needs you): a pin wakes it
+      snoozed: !!(r.restInfo?.until || r.restInfo?.woke) }]));
     // one older than 10 minutes was left by a quit (as the window reads it)
     const acc = this.shared?.value("tasks.accepting") ?? {};
     const accepting = (r: Row) => { const at = acc?.[`${r.machine ?? ""}:${r.folder}:${r.ref}`]; return typeof at === "number" && Date.now() - at < 600000; };
@@ -375,6 +386,9 @@ export class Compat {
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
         ...(r.sub ? { sub: r.sub } : {}),
+        // ASH-12: settled or snoozed by hand (its own shelf at the end of a list, never news), and whether it can be: a
+        // live agent of its own to label
+        ...restOf(r.restInfo), ...(r.worker ? { canRest: true } : {}),
         // its worker's own helper agents (SHEP-54), named in its detail's header; each one's row is over its chat's box
         ...(r.subagents?.length ? { subagents: r.subagents.map((x: any) => ({ chat: `t:${x.address}`, title: x.title, status: x.status, at: x.at, ...(x.ended ? { ended: x.ended } : {}) })) } : {}),
         // the window's Accept card accepting it now (shared "tasks.accepting", mods/accept-card): "Accepting…"
@@ -407,7 +421,8 @@ export class Compat {
     });
 
     const needs: Need[] = [
-      ...rows.filter((r) => r.section === "needs" && !r.archived).map((r) => ({ id: "attention", chat: `${taskId(r)}/worker`, place: placeOf(r), task: taskId(r), at: r.started ?? Date.now(), text: r.sub ?? "" })),
+      // a task settled or snoozed is no news (ASH-12); an Assistant can't be put away while it asks (core/settle.js)
+      ...rows.filter((r) => r.section === "needs" && !r.archived && !r.rest).map((r) => ({ id: "attention", chat: `${taskId(r)}/worker`, place: placeOf(r), task: taskId(r), at: r.started ?? Date.now(), text: r.sub ?? "" })),
       ...spaces.filter((s) => s.assistantStatus === "blocked").map((s) => ({ id: "attention", chat: placeKey(s.id), place: s.id, at: Date.now(), text: "Waits for you" })),
     ];
 
