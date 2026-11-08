@@ -114,10 +114,11 @@ export function retryLine(r, now = Date.now()) {
 // helpers: its worker's own helper agents (SHEP-54: a reviewer it started as its hc child), never among live: one at
 // work or asking keeps the task Working (its worker waits on it; the worker answers what it asks), else they count not.
 // rest (ASH-12, core/settle.js taskRest): settled or snoozed by hand, from its live agents' labels (live entries carry
-// settled and snoozed: restFields()); its own shelf at the end of a list, and never news. null for a task not running.
+// settled and snoozed: restFields()), or with none, a settle kept on the task (ASH-14 keptSettle); its own shelf at the
+// end of a list, and never news. null for a task never put away, or done.
 export function place(list, task, opts = {}) {
   const p = placeOf(list, task, opts);
-  const r = p.live.length ? taskRest(task, p.live, opts.helpers ?? [], opts.now ?? Date.now()) : null;
+  const r = p.section === "done" ? null : taskRest(task, p.live, opts.helpers ?? [], opts.now ?? Date.now());
   return { ...p, rest: r?.rest ?? null, restInfo: r };
 }
 

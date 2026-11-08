@@ -55,7 +55,7 @@ function headerPilot(a: any) {
 }
 
 
-/** ASH-12: what a task's or an Assistant's rest (core/settle.js taskRest / service/model.ts assistantRest) gives the
+/** ASH-12: what a task's or an agent's rest (core/settle.js taskRest / agentRest) gives the
  *  screen: rest (settled | snoozed), when it was settled (restAt) or wakes (restUntil, also while it shows because it
  *  needs you), and woke (its snooze ran out, not looked at yet). */
 export function restOf(r: { rest?: string | null; at?: number | null; until?: number; woke?: number } | null | undefined) {

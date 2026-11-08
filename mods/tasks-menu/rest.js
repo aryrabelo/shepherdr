@@ -11,7 +11,7 @@
 
 import { exec, appHome, shared, setShared } from "herdr";
 import { toast, plainError } from "./ui.js";
-import { REST } from "./core/settle.js";
+import { REST, PENDING, restKey, restMark, marksWith } from "./core/settle.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const RESTED = "tasks.rested";
@@ -26,13 +26,24 @@ export function targetArgs(x) {
   return { machine: m, args: ["--agent", m ? a.slice(m.length + 1) : a] };
 }
 
-// herdr-task <verb> on a target: its JSON, or throws with its words.
+// herdr-task <verb> on a target: its JSON, or throws with its words. The row moves at once (ASH-14): a mark in shared
+// "tasks.restnow" (core/settle.js PENDING) the sidebar and the Tasks panel show until what they read agrees; a refusal
+// takes it back, a snooze's answer gives it its wake time.
 export async function restCli(verb, x, more = []) {
+  const key = restKey(x);
+  const put = (m) => setShared(PENDING, marksWith(shared(PENDING), key, m));
+  put(restMark(verb));
   const { machine, args } = targetArgs(x);
-  const r = await exec(CLI(), [...(machine ? ["--on", machine] : []), verb, ...args, ...more, "--json"]);
   let out = null;
-  try { out = JSON.parse(r.stdout || "null"); } catch {}
-  if (r.code !== 0 || !out || out.error) throw new Error(out?.error || r.stderr?.trim() || "herdr-task refused it.");
+  try {
+    const r = await exec(CLI(), [...(machine ? ["--on", machine] : []), verb, ...args, ...more, "--json"]);
+    try { out = JSON.parse(r.stdout || "null"); } catch {}
+    if (r.code !== 0 || !out || out.error) throw new Error(out?.error || r.stderr?.trim() || "herdr-task refused it.");
+  } catch (e) {
+    put(null);
+    throw e;
+  }
+  if (verb === "snooze" && out.until) put(restMark(verb, out.until));
   return out;
 }
 

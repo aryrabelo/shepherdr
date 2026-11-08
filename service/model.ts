@@ -19,20 +19,7 @@ const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
 const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
 import * as RS from "../core/settle.js";
-const { restFields, stillSettled, hidden, snoozedUntil, parseSettled, wordOf, woke } = RS as any;
-
-/** ASH-12: an Assistant put away by hand (core/settle.js), as its header and the sidebar read it: settled (until new
- *  work), snoozed (out of sight until `until`), or woke (its snooze ran out, not looked at yet: the label stays until
- *  then). An Assistant asking you is never out of sight. */
-export function assistantRest(k: any, now = Date.now()) {
-  if (!k) return null;
-  const word = wordOf(k), until = snoozedUntil(k);
-  if (stillSettled(k, word)) return { rest: "settled" as const, at: parseSettled(k.labels?.settled)?.at ?? null };
-  if (hidden(k, word, [], now)) return { rest: "snoozed" as const, until };
-  if (woke(k, now)) return { rest: null, woke: until };
-  // snoozed, but asking you meanwhile: it shows, its snooze still set (Wake ends it)
-  return until > now ? { rest: null, until, showing: true } : null;
-}
+const { restFields, agentRest } = RS as any;
 
 /** What a space's row counts (the window's): its tasks that need you, its Assistant asking, and Ready tasks; a task
  *  settled or snoozed (ASH-12) counts in neither. */
@@ -311,7 +298,7 @@ export class Model {
         section: bar.sections.find((x: any) => (x.spaces ?? []).includes(s.id))?.id ?? null,
         assistant: k?.address ?? null, turn: (k as any)?.turn ?? 0, assistantStatus: (k as any)?.status?.state ?? null,
         // ASH-12: its Assistant settled or snoozed (its header's Settle and Snooze)
-        assistantRest: assistantRest(k),
+        assistantRest: agentRest(k),
         autopilot: this.pilotOf(s.id).on ? { next: this.pilotOf(s.id).next_run ?? null } : null,
         git: this.gitOf(s),
         pilot: this.pilotOf(s.id),

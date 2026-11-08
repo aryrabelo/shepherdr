@@ -48,12 +48,13 @@ export const SCHEDULE_PICKS = [
 // ASH-12 Settle and Snooze (core/settle.js): a task with a live agent (rest: { can, rest, snoozed }) is settled or
 // snoozed by hand: Settle (Unsettle once settled), Snooze with the same picks as Start later (herdr-task snooze's --in
 // or --at words) and Other time…, Wake while snoozed (or woke, not seen yet). An Assistant's header offers restMenu().
+// ASH-14: a task with no live agent settles too (rest.settle: kept on the task), without Snooze (snooze: false).
 export const SNOOZE_PICKS = SCHEDULE_PICKS;
-export const restMenu = ({ rest = null, snoozed = false } = {}) => [
+export const restMenu = ({ rest = null, snoozed = false, snooze = true } = {}) => [
   rest === "settled" ? { id: "unsettle", label: "Unsettle", icon: "rotate-ccw" } : { id: "settle", label: "Settle", icon: "check" },
-  { heading: "Snooze" },
-  ...SNOOZE_PICKS.map((p) => ({ id: "snooze", icon: "clock", ...p })),
-  { id: "snooze-other", label: "Other time…", icon: "clock", typed: true },
+  ...(snooze ? [{ heading: "Snooze" },
+    ...SNOOZE_PICKS.map((p) => ({ id: "snooze", icon: "clock", ...p })),
+    { id: "snooze-other", label: "Other time…", icon: "clock", typed: true }] : []),
   ...(snoozed ? [{ id: "wake", label: "Wake", icon: "bell" }] : []),
 ];
 // What Snooze's Other time… asks.
@@ -61,7 +62,7 @@ export const SNOOZE_OTHER = { placeholder: "fri 8:15, 18:00 or 6h", label: "When
 export const taskMenu = ({ pinned = false, status = null, rest = null } = {}) => {
   const later = ["todo", "queued", "scheduled"].includes(status);
   return [
-    ...(rest?.can ? [...restMenu(rest), sep] : []),
+    ...(rest?.can || rest?.settle ? [...restMenu({ ...rest, snooze: Boolean(rest.can) }), sep] : []),
     ...(later ? [{ heading: status === "scheduled" ? "Reschedule" : "Start later" },
       ...SCHEDULE_PICKS.map((p) => ({ id: "schedule", icon: "clock", ...p })),
       { id: "schedule-other", label: "Other time…", icon: "clock", typed: true }] : []),

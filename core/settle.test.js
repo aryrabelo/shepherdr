@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { settledValue, parseSettled, stillSettled, snoozedUntil, napping, woke, hidden, notNews, stale, taskRest, restFields, wordOf } from "./settle.js";
+import { settledValue, parseSettled, stillSettled, snoozedUntil, napping, woke, hidden, notNews, stale, taskRest, restFields, wordOf,
+  keptSettle, agentRest, taskCan, restKey, restMark, shownRest, PENDING_MS } from "./settle.js";
 import { place, secondLine } from "./tasks.js";
 import { isUnread } from "./spaces.js";
 import { notifiesBy } from "./notify.js";
@@ -140,5 +141,78 @@ describe("menus", () => {
   test("a task's menu has them only with a live agent", () => {
     expect(taskMenu({ status: "working" }).some((x) => x.id === "settle")).toBe(false);
     expect(taskMenu({ status: "working", rest: { can: true } }).some((x) => x.id === "settle")).toBe(true);
+  });
+  test("ASH-14: a task with no live agent settles, without Snooze", () => {
+    const m = taskMenu({ status: "needs", rest: { can: false, settle: true } });
+    expect(m.some((x) => x.id === "settle")).toBe(true);
+    expect(m.some((x) => x.id === "snooze" || x.heading === "Snooze")).toBe(false);
+    expect(taskMenu({ status: "needs", rest: { settle: true, rest: "settled" } })[0].id).toBe("unsettle");
+    expect(restMenu({ snooze: false }).map((x) => x.id)).toEqual(["settle"]);
+  });
+});
+
+describe("ASH-14: a task settled with no live agent (kept on the task)", () => {
+  const t = { state: "running", started: NOW - 9, settled_at: NOW, agents: [{ address: "t1", at: NOW - 9 }] };
+  test("settled until new work: a start, a new agent, failing checks", () => {
+    expect(keptSettle(t)).toEqual({ rest: "settled", at: NOW });
+    expect(taskRest(t, [], [], NOW + 5)).toEqual({ rest: "settled", at: NOW });
+    expect(keptSettle({ ...t, started: NOW + 1 })).toBeNull();
+    expect(keptSettle({ ...t, agents: [...t.agents, { address: "t9", at: NOW + 1 }] })).toBeNull();
+    expect(keptSettle({ ...t, attention_at: NOW + 1 })).toBeNull();
+    expect(keptSettle({ ...t, attention_at: NOW - 1 })).toEqual({ rest: "settled", at: NOW });
+    expect(keptSettle({ ...t, state: "done" })).toBeNull();
+    expect(keptSettle({ state: "running" })).toBeNull();
+  });
+  test("a live agent of its own says instead (its labels)", () => {
+    expect(taskRest(t, [{ address: "t1", status: "idle", turn: 1, role: "worker" }], [], NOW + 5)).toBeNull();
+    // a reviewer alone isn't one of its own
+    expect(taskRest(t, [{ address: "t2", status: "working", turn: 1, role: "reviewer" }], [], NOW + 5)).toEqual({ rest: "settled", at: NOW });
+  });
+  test("place() gives it its shelf and second line, stopped or queued; never once done", () => {
+    const list = { prefix: "APP", folder: "/r", tasks: [] };
+    const p = place(list, t, { live: [], now: NOW + 120_000 });
+    expect([p.section, p.needs, p.rest]).toEqual(["needs", "stopped", "settled"]);
+    expect(secondLine(p, null, null, NOW + 120_000)).toBe("Settled 2m ago");
+    expect(place(list, { ...t, state: "queued" }, { now: NOW }).rest).toBe("settled");
+    expect(place(list, { ...t, state: "done" }, { now: NOW }).rest).toBeNull();
+  });
+  test("what a row can do: settle unless done; snooze only with a live agent of its own", () => {
+    expect(taskCan("needs", [])).toEqual({ settle: true, snooze: false });
+    expect(taskCan("working", [{ role: "worker" }])).toEqual({ settle: true, snooze: true });
+    expect(taskCan("working", [{ role: "reviewer" }]).snooze).toBe(false);
+    expect(taskCan("done", []).settle).toBe(false);
+  });
+});
+
+describe("ASH-14: an agent's own rest (an Assistant, an agent in a tab)", () => {
+  const k = (labels, status = "idle", turn = 3) => ({ address: "t4", labels, turn, status });
+  test("settled, snoozed, woke; asking shows", () => {
+    expect(agentRest(k({ settled: "100:3" }), NOW)).toEqual({ rest: "settled", at: 100 });
+    expect(agentRest(k({ settled: "100:3" }, "idle", 4), NOW)).toBeNull();
+    expect(agentRest(k({ snoozed: String(NOW + 9) }), NOW)).toEqual({ rest: "snoozed", until: NOW + 9 });
+    expect(agentRest(k({ snoozed: String(NOW + 9) }, "blocked"), NOW)).toEqual({ rest: null, until: NOW + 9, showing: true });
+    expect(agentRest(k({ snoozed: "500" }), NOW)).toEqual({ rest: null, woke: 500 });
+    expect(agentRest(k({}), NOW)).toBeNull();
+    expect(agentRest(null, NOW)).toBeNull();
+  });
+});
+
+describe("ASH-14: a row moves the moment it's asked", () => {
+  test("each row has its key: a task's or an agent's", () => {
+    expect(restKey({ machine: null, folder: "/r", ref: "APP-1" })).toBe("task::/r:APP-1");
+    expect(restKey({ agent: "vm/t4" })).toBe("agent:vm/t4");
+  });
+  test("the mark shows until what's read agrees, at most PENDING_MS", () => {
+    const settle = restMark("settle", null, NOW);
+    expect(shownRest(null, settle, NOW + 10)).toEqual({ info: { rest: "settled", at: NOW }, keep: true });
+    // herdr-task's labels came back: what's read shows, the mark goes
+    expect(shownRest({ rest: "settled", at: NOW + 3 }, settle, NOW + 10)).toEqual({ info: { rest: "settled", at: NOW + 3 }, keep: false });
+    expect(shownRest(null, settle, NOW + PENDING_MS + 1)).toEqual({ info: null, keep: false });
+    expect(shownRest(null, restMark("snooze", NOW + 3600_000, NOW), NOW).info).toEqual({ rest: "snoozed", until: NOW + 3600_000 });
+    expect(shownRest(null, restMark("snooze", null, NOW), NOW).info).toEqual({ rest: "snoozed", until: null });
+    // Unsettle and Wake: back among the rest at once
+    expect(shownRest({ rest: "settled", at: 1 }, restMark("unsettle", null, NOW), NOW)).toEqual({ info: null, keep: true });
+    expect(shownRest({ rest: null, woke: 5 }, restMark("wake", null, NOW), NOW)).toEqual({ info: { rest: null, woke: 5 }, keep: false });
+    expect(shownRest({ rest: "snoozed", until: 9 }, null, NOW)).toEqual({ info: { rest: "snoozed", until: 9 }, keep: false });
   });
 });

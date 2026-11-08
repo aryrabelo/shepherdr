@@ -5,6 +5,8 @@ import { expect, test, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as RS from "../core/settle.js";
+const { agentRest } = RS as any;
 
 const HOME_ = mkdtempSync(join(tmpdir(), "shep-settle-"));
 const BIN = join(HOME_, "herdr-task"), CALLS = join(HOME_, "calls"), REPLY = join(HOME_, "reply");
@@ -59,15 +61,15 @@ test("a task's rest in the snapshot: settled, snoozed, woke; what it can do", ()
   expect(s.needs.map((n: any) => n.task)).toEqual(["SHOP-4"]);
 });
 
-test("an Assistant's rest in the snapshot, from its terminal's labels (core/settle.js)", () => {
+test("an Assistant's rest in the snapshot, from its terminal's labels (core/settle.js agentRest)", () => {
   const k = (labels: any, more: any = {}) => ({ address: "t1", labels: { "herdr.role": "coordinator", ...labels }, turn: 3, status: { state: "idle" }, ...more });
-  expect(M.assistantRest(k({ settled: "100:3" }), NOW)).toEqual({ rest: "settled", at: 100 });
+  expect(agentRest(k({ settled: "100:3" }), NOW)).toEqual({ rest: "settled", at: 100 });
   // a turn ended since: new work, no longer settled
-  expect(M.assistantRest(k({ settled: "100:2" }), NOW)).toBeNull();
-  expect(M.assistantRest(k({ snoozed: String(NOW + 1000) }), NOW)).toEqual({ rest: "snoozed", until: NOW + 1000 });
-  expect(M.assistantRest(k({ snoozed: "500" }), NOW)).toEqual({ rest: null, woke: 500 });
+  expect(agentRest(k({ settled: "100:2" }), NOW)).toBeNull();
+  expect(agentRest(k({ snoozed: String(NOW + 1000) }), NOW)).toEqual({ rest: "snoozed", until: NOW + 1000 });
+  expect(agentRest(k({ snoozed: "500" }), NOW)).toEqual({ rest: null, woke: 500 });
   // asking you: it shows, snooze kept
-  expect(M.assistantRest(k({ snoozed: String(NOW + 1000) }, { status: { state: "blocked" } }), NOW)).toEqual({ rest: null, until: NOW + 1000, showing: true });
+  expect(agentRest(k({ snoozed: String(NOW + 1000) }, { status: { state: "blocked" } }), NOW)).toEqual({ rest: null, until: NOW + 1000, showing: true });
   const c = new C.Compat() as any;
   const p = snapOf(c, [], [space({ assistantRest: { rest: "snoozed", until: NOW + 1000 } })]).places[0];
   expect([p.rest, p.restUntil, p.woke]).toEqual(["snoozed", NOW + 1000, undefined]);
