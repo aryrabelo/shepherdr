@@ -145,6 +145,12 @@ def news_pass(report, folder=None):
                         t.pop("own_work", None)
                     s.dirty = True
                 cur = {"status": v["status"], "why": v.get("why"), "stall": stall[0] if stall else None}
+                if v.get("rest"):
+                    # Settled or snoozed by hand (ASH-12) isn't news: a line still waiting goes unsaid, and its last
+                    # told status stays, so what changed meanwhile is told once it wakes or has new work.
+                    current[key] = {"status": None, "stall": None}
+                    mine.setdefault(str(t["id"]), {"status": cur["status"], "stall": cur["stall"]})
+                    continue
                 current[key] = cur
                 prev = mine.get(str(t["id"]))
                 mine[str(t["id"])] = {"status": cur["status"], "stall": cur["stall"] or (prev or {}).get("stall"),

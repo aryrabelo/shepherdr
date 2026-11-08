@@ -5,7 +5,8 @@ import os
 
 from .base import now
 from .agents import (
-    agent_running, detail, live_helpers, ask_reason, held_ask, last_words, own_line, own_work, status_word, STATUSES, task_status,
+    agent_running, detail, live_helpers, ask_reason, held_ask, last_words, own_line, own_work, rest_now, status_word, STATUSES,
+    task_status,
 )
 from .queues import waiting_ext, waiting_for
 
@@ -35,9 +36,16 @@ def view(s, task, live=None):
     v["report"] = report_of(task, v["status"])
     v["status_text"] = STATUSES[v["status"]]
     v["live"] = [{"address": k["address"], "status": (k.get("status") or {}).get("state") if isinstance(k.get("status"), dict) else k.get("status"),
-                  "tab": (k.get("labels") or {}).get("herdr.tab"), "role": (k.get("labels") or {}).get("herdr.role") or "worker"} for k in running]
+                  "tab": (k.get("labels") or {}).get("herdr.tab"), "role": (k.get("labels") or {}).get("herdr.role") or "worker",
+                  # its settle and snooze labels and turn, as core/settle.js restFields() and taskRest() read them (ASH-12)
+                  "turn": k.get("turn"), "settled": (k.get("labels") or {}).get("settled") or None,
+                  "snoozed": (k.get("labels") or {}).get("snoozed") or None} for k in running]
     # Its worker's own helper agents (SHEP-54: a reviewer it started as an hc child), for the Tasks panel.
     v["subagents"] = subagents(s.key(task)) if known and running and task["state"] in ("running", "ready") else []
+    # Settled or snoozed by hand (ASH-12): its own shelf at the end of a list, and never news. Its status stays what
+    # task_status() says: rest is beside it.
+    v["rest_info"] = rest_now(task, s.key(task), running) if known and running else None
+    v["rest"] = (v["rest_info"] or {}).get("rest")
     v["ref"], v["prefix"] = s.ref(task), s.prefix
     v["waiting_for"] = waiting_for(s, task)
     v["waiting_ext"] = waiting_ext(task)

@@ -109,11 +109,17 @@ herdr-task review-more HAT-3                    # one more review round, only on
 herdr-task done HAT-5                           # mark it done by hand (only when the person asks)
 herdr-task reopen HAT-5                         # undo done or ready
 herdr-task alert "Deploy is down" --body "why"  # only what truly can't wait: a toast and a sound (--task HAT-3: about that task)
+herdr-task settle HAT-6 --json                  # put it away until it has new work (a turn ends, it gets busy, checks fail): off "needs you" and news
+herdr-task unsettle HAT-6 --json                # undo a settle
+herdr-task snooze HAT-7 --at "mon 9:00" --json  # hide it until then (or --in 3h); it still shows if it asks or fails
+herdr-task wake HAT-7 --json                    # end a snooze now
+herdr-task snooze --agent vm-b/t3 --in 3h --json  # the same for an Assistant's chat, by its address (herdr-task assistants)
 ```
 
 Run exactly what was asked, for exactly the tasks named. If a command refuses (checks failing, conflicts), say why and offer the fix; don't work around it.
 - Keep waiting while any of your tasks runs or waits in the queue. When all are finished, stop and wait for the person.
 - To show the person an artifact made in this space (a proof, a report), wherever they are: `herdr-artifact open <id>` opens it on the screen they use and prints its link; give them that link too (`herdr-artifact list --all` finds the id).
+- Keep the lists tidy on your own too: settle a task whose agent has nothing more for the person (not a Ready one: it waits for their Accept), and snooze one that waits on something outside (a reply, a deploy, a date) until when it's worth a look again. The home space's Assistant does the same for other Assistants' chats with `--agent`; never settle your own chat (your turn is new work).
 
 ## Automations
 
