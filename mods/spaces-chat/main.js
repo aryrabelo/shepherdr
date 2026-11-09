@@ -71,6 +71,12 @@ function place(s, ps) {
   return ps.find((p) => tabs.has(p.tab) && p.cwd && own(p.cwd))?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
+// Where the space-folders mod places a space for its folders: its first terminal's live folder (a task worker's
+// checkout too, as the mod's), else where it was made.
+function folderPlace(s, ps) {
+  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
+}
 // drag()'s machine for Pinned's places: a space from any machine lands there.
 const ANY = "\u0000any";
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
@@ -556,17 +562,18 @@ export default class Spaces extends View {
     return out;
   }
 
-  // This computer's spaces in no section: each folder's header and, unless folded, its spaces (a worktree with the
-  // space it shows under), then those in none. No folders (no file): the rows as they are.
+  // This computer's spaces in no section: each folder's header and, unless folded, its spaces, then those in none. No
+  // folders (no file): the rows as they are. Which folder is the mod's: from where each space works now (folderPlace),
+  // a worktree space with its repo's own space, worked out over every space here (pinned and sectioned ones too), so a
+  // worktree follows its repo wherever the repo shows.
   foldered(rows, t) {
     const d = this.folders?.data;
     if (!d) { this.folderRows = new Map(); return rows.flatMap((r) => this.withThreads(r, t)); }
-    let parent = null;
-    const placed = foldersOf(d, rows.map((r) => {
-      if (!r.tree) parent = r.w.id;
-      return { id: r.w.id, path: r.at, under: r.tree ? parent : null };
-    }));
-    this.folderRows = placed;
+    const ps = panes(), every = this.visible().filter((r) => !r.w.machine);
+    const mains = new Map();
+    for (const r of every) if (r.g && !r.g.linked && !mains.has(r.g.repo)) mains.set(r.g.repo, r.w.id);
+    const placed = foldersOf(d, every.map((r) => ({ id: r.w.id, path: folderPlace(r.w, ps), under: r.g?.linked ? mains.get(r.g.repo) ?? null : null })));
+    this.folderRows = new Map(rows.map((r) => [r.w.id, placed.get(r.w.id) ?? null]));
     const out = [];
     for (const f of d.list) {
       const members = rows.filter((r) => placed.get(r.w.id) === f.id);
@@ -701,9 +708,11 @@ export default class Spaces extends View {
     else if (kind === "folder") {
       if (sectionOf(from)) placeSpace(from, null);
       this.refile(from, id, cx);
-    } else if (kind === "top") {
+    } else if (kind === "out") this.refile(from, null, cx);
+    else if (kind === "top") {
       placeSpace(from, null);
-      if (id === "null") this.refile(from, null, cx);
+      // out of its folder only when it showed in one (not one leaving Pinned or a section: its folder stays)
+      if (id === "null" && this.folderRows.get(from)) this.refile(from, null, cx);
     } else if (kind === "space" && id !== from) {
       const sec = sectionOf(id);
       if (sec) {
@@ -711,8 +720,9 @@ export default class Spaces extends View {
         placeSpace(from, sec.id, this.edge(from, id) === "bottom" ? at + 1 : at);
       } else {
         if (sectionOf(from)) placeSpace(from, null);
-        // dropped among a folder's spaces (or those in none): it goes in that one
-        if (this.folderRows.has(id)) this.refile(from, this.folderRows.get(id), cx);
+        // dropped among a folder's spaces it goes in that one; among those in none, out of the folder it showed in
+        const into = this.folderRows.get(id) ?? null;
+        if (this.folderRows.has(id) && (into || this.folderRows.get(from))) this.refile(from, into, cx);
         // space.move takes the target's place, counted from 1: the rest shift toward where it was.
         const i = spaces().findIndex((s) => s.id === id);
         if (i >= 0) run("space.move", { id: from, index: i + 1 });
@@ -724,8 +734,9 @@ export default class Spaces extends View {
   refile(from, folder, cx) {
     const d = this.folders.data, s = spaces().find((x) => x.id === from);
     if (!d || !s || s.machine) return;
-    const at = place(s, panes());
-    if ((folderOf(d, from, at) ?? null) !== (folder ?? null)) this.folders.put(cx, from, folder ?? null, at);
+    const at = folderPlace(s, panes());
+    const now = this.folderRows.has(from) ? this.folderRows.get(from) : folderOf(d, from, at);
+    if ((now ?? null) !== (folder ?? null)) this.folders.put(cx, from, folder ?? null, at);
   }
 
   // What needs the person in a space, for its red count, and its tasks in Ready, for its green
@@ -875,6 +886,18 @@ export default class Spaces extends View {
           .child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => this.release(cx))
-        .children(this.grouped(t, collapsed)));
+        .children(this.grouped(t, collapsed))
+        .when(!collapsed, (el) => el.child(this.outStrip(t))));
+  }
+
+  // While a space shown in a folder is dragged, a place to drop it out of every folder (the mod's dashed strip): with
+  // no machine header and every loose space in a folder there'd be none otherwise.
+  outStrip(t) {
+    if (this.pressed === null || !this.folderRows.get(this.pressed)) return null;
+    const on = this.over === "out:null";
+    return div().id("folder-out").mt(6).h(34).flex_none().flex().items_center().justify_center().rounded(RADIUS.card)
+      .border_1().border_dashed().border_color(on ? t.accent : t.border).text_size(TEXT.label).text_color(on ? t.foreground : t.dim)
+      .on_mouse_move((_e, cx) => this.drag("out:null", null, cx))
+      .child("Drop here to take it out of its folder");
   }
 }

@@ -92,6 +92,21 @@ const n = writes.length;
 f.put(cx, "s2", "b", "/x"); await settle();
 out.noop = writes.length - n;
 
+// item 1: a fold sets the state it was clicked to; another layout folding it meanwhile leaves it folded
+const aWas = f.folded("a");
+race = JSON.stringify({ ...file(), at: file().at + 1000, list: file().list.map((x) => (x.id === "a" ? { ...x, folded: !aWas } : x)) });
+f.fold(cx, "a"); await settle();
+out.foldRace = file().list.find((x) => x.id === "a").folded === !aWas;
+// two clicks before either is written: one after the other, both kept, the reads held until the last one
+const aNow = f.folded("a"), bNow = f.folded("b");
+f.fold(cx, "a");
+f.fold(cx, "b");
+out.pendingTwo = f.pending;
+await settle();
+out.bothKept = file().list.find((x) => x.id === "a").folded === !aNow && file().list.find((x) => x.id === "b").folded === !bNow;
+out.pendingAfter = f.pending;
+out.shownAfter = f.folded("a") === !aNow && f.folded("b") === !bNow;
+
 // the file gone: no folders
 delete files[PATH];
 f.read(cx); await settle();
@@ -125,6 +140,11 @@ class WindowFolders(unittest.TestCase):
         self.assertEqual(out["raceOf"], "b")
         self.assertTrue(out["raceAt"], "the write goes past the at of the copy it was done over")
         self.assertEqual(out["noop"], 0)
+        self.assertTrue(out["foldRace"], "a fold done again on a newer copy keeps the state it was clicked to")
+        self.assertEqual(out["pendingTwo"], 2)
+        self.assertTrue(out["bothKept"], "two quick changes are written one after the other, both kept")
+        self.assertEqual(out["pendingAfter"], 0)
+        self.assertTrue(out["shownAfter"])
         self.assertIsNone(out["gone"])
 
     def test_sidebar_wiring(self):
@@ -137,8 +157,16 @@ class WindowFolders(unittest.TestCase):
         self.assertIn(".on_click((_e, cx) => this.folders.fold(cx, f.id))", main)
         self.assertIn('this.drag(`folder:${f.id}`, null, cx)', main)
         self.assertIn('else if (kind === "folder")', main)
-        self.assertIn("this.refile(from, this.folderRows.get(id), cx)", main)
         self.assertIn("core/folders.js: spaces-chat", read("lib", "COPIES"))
+        # item 4: a strip to drop a space out of every folder while one shown in a folder is dragged
+        self.assertIn('if (this.pressed === null || !this.folderRows.get(this.pressed)) return null;', main)
+        self.assertIn('else if (kind === "out") this.refile(from, null, cx);', main)
+        # item 6: leaving Pinned or a section by the machine's header (or a loose space) keeps its rule's folder
+        self.assertIn('if (id === "null" && this.folderRows.get(from)) this.refile(from, null, cx);', main)
+        self.assertIn("if (this.folderRows.has(id) && (into || this.folderRows.get(from))) this.refile(from, into, cx);", main)
+        # items 2 and 7: the mod's place (no worktree skip), a worktree with its repo found among every space here
+        self.assertIn("path: folderPlace(r.w, ps), under: r.g?.linked ? mains.get(r.g.repo) ?? null : null", main)
+        self.assertIn("every = this.visible().filter((r) => !r.w.machine)", main)
 
 
 if __name__ == "__main__":
