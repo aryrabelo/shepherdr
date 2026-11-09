@@ -37,7 +37,7 @@ like this, with nothing lost:
 4. Close the window (agents keep running in herdr-core), move `~/.config/herdr-app` aside as
    `~/.config/herdr-app.pre-3.0`, start Herdr once so it writes a fresh home, close it.
 5. `./install.sh --guard`, then bring back your state from `.pre-3.0`: `data/`, `shared.json`, `view.json`,
-   `seen.json`, `window.json`, `settings.json`, `keys.json`, `secrets/`. Set `"layout": "shepherdr"` in `shared.json`
+   `seen.json`, `window.json`, `settings.json`, `keys.json`, `secrets/`. Set `"layout": "ary-shepherdr"` in `shared.json`
    (the layout was `main-tasks` before 3.0) and rename `layout:main-tasks` to `layout:ary-shepherdr` in `keys.json`.
 6. Open the window, `shepherdr doctor`, and check: no errors in `herdr-app status`, the same tasks, chats and artifacts.
 
