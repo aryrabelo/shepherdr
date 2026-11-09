@@ -12,17 +12,24 @@
 // back on. Each swap's last step removes the pane this header is on, so it goes last.
 // Which chat shows which agent is the agent's core label herdr.chat=<chat pane>: every screen
 // sees it, and the agents list, tab bar, spaces and status bar read it (chat/parked.js).
+// An Assistant's header also settles and snoozes it (ASH-12, core/settle.js): on hover, Settle's tick (Unsettle's
+// arrow once settled) and Snooze's clock, a menu of core/menus.js restMenu (mods/tasks-menu "rest"); while settled
+// or snoozed its words say so where its status goes ("Settled", "Wakes Today 18:00", "Woke"). Looked at with the
+// window in front once it woke, its snooze is over (rest.js wakeSeen).
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared } from "herdr";
+import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared, openOverlay, window } from "herdr";
 import { panes, terminals, spaces, inRender } from "./live.js";
 import { spaceName } from "./core/spaces.js";
 import { apSpace, apWatch, apPoll, apGroup, apHeartbeatLink, COMPACT_BELOW } from "./autopilot.js";
-import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError } from "./ui.js";
+import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError, toastWho } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 // "End Claude Code?" and its buttons: core/menus.js (the web app's header asks in the same words).
-import { endAgent } from "./core/menus.js";
+import { endAgent, restMenu } from "./core/menus.js";
+import { REST, stillSettled, napping, woke, snoozedUntil, wordOf } from "./core/settle.js";
+import { wakesLine } from "./core/tasks.js";
+import { settle, unsettle, wakeSeen } from "./rest.js";
 
 const CHAT = "chat";
 const LABEL = "herdr.chat";
@@ -71,6 +78,24 @@ function parked(terminal) {
   if (!k) return null;
   const st = ["working", "blocked", "done", "idle"].includes(k.status) ? k.status : null;
   return { program: k.program, status: st, cwd: k.foreground?.cwd ?? k.cwd ?? null, title: k.title ?? "" };
+}
+
+// An Assistant's rest (ASH-12): its terminal k settled, snoozed (napping, till when) or woke and not looked at yet.
+function restOf(k) {
+  if (!k) return null;
+  const word = wordOf(k);
+  return { settled: stillSettled(k, word), napping: napping(k), woke: woke(k), until: snoozedUntil(k), busy: word === "working" || word === "blocked" };
+}
+
+// The Snooze menu's height, as tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
+function menuHeight(items) {
+  let h = 8, first = true;
+  for (const x of items) {
+    if ((x.sep || x.heading) && !first) h += 4;
+    h += x.sep ? 0 : x.heading ? 28 : 32;
+    first = false;
+  }
+  return h;
 }
 
 export default class Pane extends View {
@@ -193,6 +218,19 @@ export default class Pane extends View {
     run("pane.close", { pane: chat });
   }
 
+  // What a settle's toast calls the Assistant: its space's ("tor-gameboy Assistant", ui.js toastWho).
+  restName(k) {
+    return toastWho(k);
+  }
+
+  // Snooze's clock: core/menus.js restMenu at the pointer (mods/tasks-menu "rest"), Other time… left out (the web's).
+  snoozeMenu(agent, k, rest) {
+    const state = { rest: rest.settled ? "settled" : null, snoozed: rest.napping || rest.woke };
+    const items = restMenu(state).filter((x) => !x.typed);
+    openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height: menuHeight(items),
+      props: { menu: "rest", agent, what: this.restName(k), ...state } });
+  }
+
   // Chat | Terminal: the shared switch (ui.js segmented), as the task view's header has it.
   switcher(t, id, chatMode, onChat, onTerminal) {
     return segmented(id, [["chat", "Chat"], ["terminal", "Terminal"]], chatMode ? "chat" : "terminal",
@@ -230,6 +268,12 @@ export default class Pane extends View {
     // Autopilot add-on is off).
     const apFor = addonOn("autopilot") ? apSpace(agent ?? (chatMode ? null : self.terminal), lazy || null) : null;
     apWatch(this, apFor, cx);
+    // An Assistant with a live agent settles and snoozes (ASH-12).
+    const restAddr = isAssistant ? (agent ?? (chatMode ? null : self.terminal)) : null;
+    const restK = restAddr ? terminals().find((x) => x.address === restAddr && x.state === "live") ?? null : null;
+    const rest = restOf(restK);
+    if (rest?.woke && self.focused && window()?.active) wakeSeen(restAddr);
+    const restWords = rest?.settled ? REST.settled : rest?.napping ? wakesLine(rest.until) : rest?.woke ? REST.woke : null;
     return h_flex()
       .id(`pane-head-${pane}`)
       .size_full()
@@ -254,6 +298,8 @@ export default class Pane extends View {
         .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900))
         .when((this.width ?? Infinity) >= COMPACT_BELOW, el => el.child(div().whitespace_nowrap().child("Working…")))))
       .when(st === "blocked", el => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(RADIUS.control).bg(t.blocked + "26").text_size(TEXT.id).font_semibold().text_color(t.blocked).child("Needs you")))
+      // Settled or snoozed (ASH-12): quiet words, as the status's ("Settled", "Wakes Today 18:00", "Woke").
+      .when(Boolean(restWords) && st !== "blocked" && (this.width ?? Infinity) >= COMPACT_BELOW, el => el.child(div().flex_none().whitespace_nowrap().text_color(t.dim).child(restWords)))
       // Autopilot sits with the other controls on the right, not mid-bar after the folder.
       // "Write a heartbeat" before it, so nothing after the switch comes and goes with it.
       .when(Boolean(apFor), (el) => el.child(apHeartbeatLink(this, apFor, pane) ?? div())
@@ -265,6 +311,10 @@ export default class Pane extends View {
         .child(uiButton(`ph-end-${pane}`, endAgent(prog).verb, { kind: "primary", onClick: () => this.closeChat(pane) })))
       // Hover buttons come before the switch so Chat | Terminal never moves.
       .when(this.hovered && !(entry && this.ending === true), el => el
+        // Settle (not while it works or asks: there's no putting away work under way) or Unsettle, then Snooze's menu.
+        .when(Boolean(rest) && (rest.settled || !rest.busy), el => el.child(this.button(t, `ph-settle-${pane}`, rest.settled ? "rotate-ccw" : "check", null, null,
+          () => (rest.settled ? unsettle({ agent: restAddr }, this.restName(restK)) : settle({ agent: restAddr }, this.restName(restK))))))
+        .when(Boolean(rest), el => el.child(this.button(t, `ph-snooze-${pane}`, "clock", null, null, () => this.snoozeMenu(restAddr, restK, rest))))
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, self.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))

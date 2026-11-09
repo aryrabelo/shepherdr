@@ -14,7 +14,7 @@ import time
 from .base import ENTRY, Fail, guard, hc_json, now, STORE
 from .when import parse_at
 from .settings import bare, settings_for, worker_argv, worktrees_on
-from .agents import agent_running, live_agents, starting, status_of, task_status
+from .agents import agent_running, detail, live_agents, rest_now, starting, status_of, task_status
 from .sessions import session_of
 from .launch import default_space
 from .store import locate, open_store, read_list, Store, store_files
@@ -28,6 +28,7 @@ from .tick import end_done_pass, lost_logs_pass, memory_guard, retry_pass, tick_
 from .backups import backup_pass
 from .machines import machines_pass
 from .takeover import cli_check_pass
+from .rest import rest_pass
 
 
 # ---- automations ----------------------------------------------------------------------------
@@ -399,10 +400,13 @@ def task_facts(s, t):
     """How a task is now, as events read it. Another machine's come this way too (`auto feed`)."""
     live = [k for k in live_agents(s.key(t))] if t["state"] in ("running", "ready") else []
     working_ones = [k for k in live if agent_running(k)]
+    # Settled or snoozed by hand (ASH-12): its labels need hc get (hc ls has none).
+    rest = rest_now(t, s.key(t), [detail(k) for k in working_ones]) if working_ones else None
     return {"id": t["id"], "ref": s.ref(t), "title": t["title"], "branch": t.get("branch"), "state": t["state"],
             "status": status_of(t, working_ones) if t["state"] == "running" else t["state"],
             "needs": task_status(t, working_ones)[1], "attention": t.get("attention"), "merged": bool(t.get("merged")),
-            "automation": t.get("automation"), "starting": bool(t["state"] == "running" and starting(t))}
+            "automation": t.get("automation"), "starting": bool(t["state"] == "running" and starting(t)),
+            "rest": (rest or {}).get("rest")}
 
 
 def diff_events(facts, seen):
@@ -435,13 +439,18 @@ def diff_events(facts, seen):
                 out.append(("merged", f))
             if f.get("attention") and f.get("attention") != prev.get("attention"):
                 out.append(("failed", f))
+            # Settled or snoozed by hand (ASH-12) isn't news: neither needs-you nor stalled, and how it was stays
+            # noted, so what changed meanwhile is told once it wakes or has new work.
+            rest = f.get("rest")
             # Needs you: its agent asks something, or waits for a reply (the status people see).
-            if needs in ("asks", "reply", "screen") and prev.get("needs") not in ("asks", "reply", "screen"):
+            if needs in ("asks", "reply", "screen") and prev.get("needs") not in ("asks", "reply", "screen") and not rest:
                 out.append(("needs-you", f))
             stalled = f["state"] == "running" and ((status == "stopped" and not f.get("starting")) or (cur["quiet"] and now() - cur["quiet"] >= STALL_MS))
-            if stalled and not prev.get("stalled"):
+            if stalled and not prev.get("stalled") and not rest:
                 out.append(("stalled", f))
-            cur["stalled"] = bool(stalled)
+            cur["stalled"] = bool(prev.get("stalled")) if rest else bool(stalled)
+            if rest:
+                cur["needs"] = prev.get("needs")
         seen[key] = cur
     return out
 
@@ -662,6 +671,10 @@ def one_pass(report):
             backup_pass(report)
         except Exception as e:  # never stops the scheduler
             print(f"{time.strftime('%H:%M:%S')} backup: {e}", flush=True)
+        try:
+            rest_pass(report)  # ASH-12: stale settle and snooze labels (never raises)
+        except Exception as e:  # never stops the scheduler
+            print(f"{time.strftime('%H:%M:%S')} settle: {e}", flush=True)
         try:
             cli_check_pass(report)
         except Exception as e:  # never stops the scheduler

@@ -36,7 +36,20 @@ export function markPlaceRead(snap: Snapshot, ps: Place[]) {
   markRead(snap, ps.map((p) => p.chat).filter((k): k is string => !!k))
 }
 
-/** while the app is on screen, the chats it shows are read */
+/** ASH-12: the chats of these keys whose snooze ran out and nobody has looked yet ("Woke"), each with when it woke */
+export function wokeIn(snap: Snapshot, keys: string[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const k of keys) {
+    const at = snap.places.find((p) => p.chat === k)?.woke ?? snap.tasks.find((t) => t.agent?.chat === k)?.woke
+    if (at) out[k] = at
+  }
+  return out
+}
+/** what a Woke seen sent already covers ("<key>\n<woke>"), so each is said once */
+const seenWoke = new Set<string>()
+
+/** while the app is on screen, the chats it shows are read; one that woke from its snooze is looked at (its Woke goes:
+ *  herdr-task wake clears the label it kept till now, ASH-12) */
 export function MarkRead() {
   const snap = useSnap()
   const ui = useStore((s) => s.ui)
@@ -50,5 +63,12 @@ export function MarkRead() {
   useEffect(() => {
     if (snap && keys.length) markRead(snap, keys)
   }, [keys.join('\n'), snap])
+  const woke = snap && visible ? Object.entries(wokeIn(snap, visibleChats(ui, snap))).filter(([k, at]) => !seenWoke.has(`${k}\n${at}`)) : []
+  useEffect(() => {
+    for (const [k, at] of woke) {
+      seenWoke.add(`${k}\n${at}`)
+      act({ type: 'wake', chat: k }).catch(() => seenWoke.delete(`${k}\n${at}`))
+    }
+  }, [woke.map(([k, at]) => `${k}:${at}`).join('\n')])
   return null
 }

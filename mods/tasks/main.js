@@ -30,6 +30,8 @@ import { taskMenu } from "./core/menus.js";
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
   queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
+// Settled and snoozed by hand (ASH-12): each live agent's labels, the shelves' words.
+import { restFields, REST } from "./core/settle.js";
 import { TEXT, H, RADIUS, red, amber } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
@@ -214,7 +216,7 @@ export default class Tasks extends View {
         const chat = k.labels?.["herdr.chat"];
         const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? (chat ? (m ? `${m}/${chat}` : chat) : null);
         return { address: k.address, status: st, program: a?.program ?? k.program, tab: tab && m ? `${m}/${tab}` : tab, pane,
-          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn };
+          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, ...restFields(k) };
       });
   }
 
@@ -275,8 +277,14 @@ export default class Tasks extends View {
     const archived = placed.filter((p) => this.shelved(p)).sort((a, b) => (b.task.archived ?? 0) - (a.task.archived ?? 0));
     placed = placed.filter((p) => !archived.includes(p));
     this.prunePins(placed, cx);
+    // Settled and snoozed by hand (ASH-12, core/tasks.js place()'s rest): on their own shelves at the very end, in no
+    // other group, Needs you and the filter's counts included. Woke ones stay where they are ("Woke · …").
+    const resting = placed.filter((p) => p.rest);
+    placed = placed.filter((p) => !p.rest);
+    const restNamed = new Set(resting.map((p) => `${p.list.machine ?? ""}:${p.list.folder}:${refOf(p.list, p.task)}`));
     // Needs you: asks, stuck agents, problems, failed automations (a task ready to merge is in Ready).
-    let inbox = needs();
+    // (an item herdr-task's list hasn't caught up with yet: the task is on a shelf already)
+    let inbox = needs().filter((x) => !(x.ref && restNamed.has(`${x.machine ?? ""}:${x.folder}:${x.ref}`)));
     if (here) inbox = inbox.filter((x) => this.needHere(here, x));
     this.readAsks(inbox, cx);
     this.readPrefixes(inbox, cx);
@@ -287,6 +295,7 @@ export default class Tasks extends View {
       inbox = inbox.filter((x) => this.needFound(x, q));
     }
     const found = q ? archived.filter((p) => this.found(p, q)) : archived;
+    const onShelf = q ? resting.filter((p) => this.found(p, q)) : resting;
     // Pinned (the person's pins, shared "tasks.pinned"): at the top of the grouped list, and in no
     // other group there, Needs you included (its item for a pinned task shows as that task's row).
     const pinSet = this.pins();
@@ -391,8 +400,11 @@ export default class Tasks extends View {
           }
         }
       }
-      // Automations: their own group, last.
+      // Automations: their own group.
       if (rowsOf.automations.length) body.push(this.group("automations", "Automations", rowsOf.automations, t, { open }));
+      // Last, after everything else (as T3's): Snoozed, each row saying when it wakes, soonest first; then Settled,
+      // only its count until opened, latest first (core/settle.js REST_GROUPS).
+      body.push(...this.shelves(onShelf, t, open));
       // Nothing at all to show: say so once (never "yet").
       if (!body.length && this.ready && !q) body.push(note(here ? `Nothing in ${here.name}.` : this.emptyLine()));
       // Searching, the archived tasks that match come last, as a group; else a row opens them.
@@ -678,17 +690,38 @@ export default class Tasks extends View {
   doneLine(ps, t) {
     const today = new Date().toDateString();
     const all = ps.every((p) => p.task.done_at && new Date(p.task.done_at * (p.task.done_at < 1e12 ? 1000 : 1)).toDateString() === today);
-    return h_flex().id("task-done-line").flex_none().mt(6).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).cursor_pointer()
+    return this.foldedLine("task-done-line", `${ps.length} done${all ? " today" : ""}`, "done:open", t);
+  }
+
+  // A group kept to one quiet line until opened (Done, Settled): a chevron and its words; a click opens it (its
+  // "<key>" remembered: the opened group's heading folds it back to this line).
+  foldedLine(id, words, key, t) {
+    return h_flex().id(id).flex_none().mt(6).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).cursor_pointer()
       .text_size(TEXT.label).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.muted))
-      .on_click((_e, cx) => { this.fold("done:open", true); cx.notify(); })
+      .on_click((_e, cx) => { this.fold(key, true); cx.notify(); })
       .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
         .child(svg("mods/workspace-chrome/chevron-right.svg").size(12).flex_none()))
-      .child(`${ps.length} done${all ? " today" : ""}`);
+      .child(words);
+  }
+
+  // The shelves at the very end of every grouping (ASH-12, core/settle.js REST_GROUPS): Snoozed, a group that folds
+  // as any, the soonest to wake first (each row's second line "Wakes Today 18:00"); then Settled, one quiet line
+  // ("3 settled") until opened, as For you's Done, the latest settled first. Searching, both show whole and open.
+  shelves(ps, t, open) {
+    const out = [];
+    const snoozed = ps.filter((p) => p.rest === "snoozed").sort((a, b) => (a.restInfo?.until ?? 0) - (b.restInfo?.until ?? 0));
+    const settled = ps.filter((p) => p.rest === "settled").sort((a, b) => (b.restInfo?.at ?? 0) - (a.restInfo?.at ?? 0));
+    if (snoozed.length) out.push(this.group("snoozed", REST.snoozed, snoozed.map((p) => this.row(p, t)), t, { open }));
+    if (settled.length) out.push(open || this.shut("settled:open")
+      ? this.group("settled", REST.settled, settled.map((p) => this.row(p, t)), t, { open, onFold: () => this.fold("settled:open", false) })
+      : this.foldedLine("task-settled-line", `${settled.length} ${REST.settled.toLowerCase()}`, "settled:open", t));
+    return out;
   }
 
   // A row's status mark: Shepherdr's task dot (dot.js); a Working row's pie shows its % done.
   glyph(p, w) {
-    return taskDot(p.section, { pct: w?.done });
+    // Settled and snoozed say so instead (ASH-12): a tick, a clock.
+    return taskDot(p.rest ?? p.section, { pct: w?.done });
   }
 
   // An automation (herdr-task auto), by its name (no id), and on the right when it runs next
@@ -858,15 +891,17 @@ export default class Tasks extends View {
     const w = reportOf(task, section, live);
     const sub = this.statusLine(p, w);
     // Scheduled (SHEP-38): its time until it starts under its calendar ("6h"), where a working row's time left goes, in grey.
-    const left = leftOf(p, w);
+    const left = p.rest ? null : leftOf(p, w);
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
       go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
-      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
+      dim: section === "done" || p.rest === "settled", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
       action: section === "ready" ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
-        ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
+        ref: refOf(list, task), sub: section === "scheduled" ? sub : null,
+        // Settle and Snooze while it has a live agent of its own (ASH-12; a reviewer's turn is its worker's)
+        rest: { can: live.some((a) => a.role !== "reviewer"), rest: p.rest, snoozed: Boolean(p.restInfo?.until || p.restInfo?.woke) } },
     }, t);
   }
 
@@ -891,8 +926,9 @@ export default class Tasks extends View {
   // their own: a pinned task sits in the Pinned group.
   // A task not started yet also starts later (SHEP-38): a few times, and a scheduled one Start now and Unschedule
   // (core/menus.js taskMenu; the web's Other time… types any time, here the Assistant does).
+  // A task with a live agent also settles and snoozes (ASH-12): Settle or Unsettle, Snooze's times, Wake.
   rowMenu(pin) {
-    const items = taskMenu({ pinned: pin.on, status: pin.status }).filter((x) => !x.typed);
+    const items = taskMenu({ pinned: pin.on, status: pin.status, rest: pin.rest }).filter((x) => !x.typed);
     // As tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
     let height = 8, first = true;
     for (const x of items) {
@@ -901,7 +937,7 @@ export default class Tasks extends View {
       first = false;
     }
     openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height, props: { menu: "row", key: pin.key, on: pin.on,
-      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub } });
+      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, rest: pin.rest } });
   }
 
   // Ready = "looks done, your call": Review (opens the Accept card) is the person's one action here, at the row's end. It merges first when there is something to merge (herdr-task accept follows the merge

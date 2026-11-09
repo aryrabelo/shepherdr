@@ -3,6 +3,7 @@
 // Assistant has something new (unread: the core label herdr.chat.read, the same on every device). The window
 // gets spaces from Herdr (spaces()); the service and the web app build them here from the same documents.
 // Shared core: the source is core/spaces.js; bin/sync-shared copies it into the mods in lib/COPIES.
+import { notNews, wordOf } from "./settle.js";
 
 export const READ = "herdr.chat.read";
 export const machineOf = (address) => (String(address).includes("/") ? String(address).split("/")[0] : null);
@@ -21,9 +22,11 @@ export function readTurn(k, seen = {}) {
   return Number.isFinite(mark) ? mark : seen[k.address] ?? 0;
 }
 
-// Unread, as Slack has it: only an Assistant counts; task chats never make a row bold.
-export function isUnread(k, seen = {}, asked = 0) {
+// Unread, as Slack has it: only an Assistant counts; task chats never make a row bold. A settled or snoozed one isn't
+// news (core/settle.js): a turn ended since a settle is new work, and makes it unread again.
+export function isUnread(k, seen = {}, asked = 0, now = Date.now()) {
   if (!k || k.labels?.["herdr.role"] !== "coordinator") return false;
+  if (notNews(k, wordOf(k), [], now)) return false;
   return (k.turn ?? 0) > Math.max(readTurn(k, seen), asked);
 }
 

@@ -26,6 +26,7 @@ from .home import cmd_home
 from .assistant_settings import cmd_session_note
 from .feedback import cmd_feedback
 from .reviewer import cmd_review_start
+from .rest import cmd_settle, cmd_snooze, cmd_unsettle, cmd_wake
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -122,6 +123,14 @@ def remote(machine, argv):
             for k in ("tab", "terminal"):
                 if isinstance(d.get(k), str) and "/" not in d[k]:
                     d[k] = f"{machine}/{d[k]}"
+            # Settle and Snooze's terminals (ASH-12) are that machine's too.
+            if argv[:1] in (["settle"], ["unsettle"], ["snooze"], ["wake"]):
+                there = lambda x: x if "/" in str(x) else f"{machine}/{x}"
+                for k in ("settled", "unsettled", "snoozed", "woke"):
+                    if isinstance(d.get(k), list):
+                        d[k] = [there(x) for x in d[k]]
+                if isinstance(d.get("was_snoozed"), dict):
+                    d["was_snoozed"] = {there(x): v for x, v in d["was_snoozed"].items()}
             out = json.dumps(d) + "\n"
         # An automation's view (auto list, show, add...) is that machine's: it says so (SHEP-43).
         if argv[:1] == ["auto"] and argv[1:2] != ["feed"]:
@@ -243,6 +252,21 @@ def main():
     c.add_argument("title", help="what can't wait, a few words")
     c.add_argument("--body", help="why, a line or two")
     c.add_argument("--task", help="the task it's about (an Assistant's alert about one of its tasks always reaches the person)")
+    # ASH-12 Settle and Snooze: a task's live agents (never its reviewer) or one terminal (--agent: an Assistant).
+    def rest_cmd(name, fn, help):
+        c = cmd(name, fn, help, id=False)
+        c.add_argument("id", nargs="?", help="task id (4, #4 or its key); or --agent")
+        c.add_argument("--agent", metavar="TERMINAL", help="a live terminal instead of a task's agents: an Assistant (t3, vm-b/t3)")
+        return c
+    rest_cmd("settle", cmd_settle, "put a task (or --agent) away until it has new work: a turn ends, it gets busy, its checks fail; "
+             "off every \"needs you\" and news, on a Settled shelf at the end of lists; ends a snooze")
+    c = rest_cmd("unsettle", cmd_unsettle, "undo settle")
+    c.add_argument("--snooze-until", type=int, metavar="MS", help="put back the snooze the settle ended, if it hasn't run out (Undo)")
+    c = rest_cmd("snooze", cmd_snooze, "hide a task (or --agent) until a time, working or not, on a Snoozed shelf: it still shows "
+                 "while it asks or fails, and wakes where it was; ends a settle")
+    c.add_argument("--in", dest="in_", metavar="SPAN", help="this long from now: \"3h\", \"90m\", \"2 days\"")
+    c.add_argument("--at", help="at this time, this machine's time zone: \"tomorrow 9:00\", \"mon 9:00\", \"18:00\"")
+    rest_cmd("wake", cmd_wake, "end a snooze now (also: woke, now seen)")
     c = cmd("feedback", cmd_feedback, "a problem in Shepherdr itself (not the project's): feedback \"<one line>\" --details \"goal, what "
             "was tried, what went wrong, expected, suggested fix\" returns at once and your Assistant offers the person to file it "
             "on GitHub; an Assistant gets whether to offer, and files it only on the person's yes (--file)", id=False)

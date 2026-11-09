@@ -143,8 +143,9 @@ function firstWhenIdle(hub: Hub, addr: string, text: string) {
 async function run(cmd: string[]) {
   // a program that isn't there (herdr-app on a web-only install) fails as any other: its code, not a throw
   let p: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
-  // the window's herdr-app: SHEPHERDR_HERDR_APP in tests (as SHEPHERDR_HC for hc)
+  // the window's herdr-app: SHEPHERDR_HERDR_APP in tests (as SHEPHERDR_HC for hc); herdr-task: SHEPHERDR_HERDR_TASK
   if (cmd[0] === "herdr-app" && process.env.SHEPHERDR_HERDR_APP) cmd = [process.env.SHEPHERDR_HERDR_APP, ...cmd.slice(1)];
+  if (cmd[0] === "herdr-task" && process.env.SHEPHERDR_HERDR_TASK) cmd = [process.env.SHEPHERDR_HERDR_TASK, ...cmd.slice(1)];
   try { p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); }
   catch (e) { return { code: 127, stdout: "", stderr: String(e) }; }
   const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
@@ -163,6 +164,42 @@ async function addedMachines() {
 }
 const task = (args: string[], folder: string, machine: string | null) =>
   run(["herdr-task", ...(machine ? ["--on", machine] : []), ...args, "--folder", folder, "--json"]);
+
+/** ASH-12 Settle and Snooze: what herdr-task is told for a chat (core/settle.js; herdr-task settle | unsettle | snooze |
+ *  wake). A task's chat ("<task>/worker") names the task (its live agents); an Assistant's (p:<space>) or another tab's
+ *  (t:<address>) its terminal, by --agent on its own machine (--on). Null: no such chat here. */
+export function restTarget(compat: Pick<Compat, "addrOf" | "taskOf" | "spaceOf">, key: string): { args: string[]; folder: string | null; machine: string | null } | null {
+  // (a task's key has its role after a "/"; a space's never has one)
+  if (key.startsWith("t:") || (key.startsWith("p:") && !key.includes("/"))) {
+    const a = compat.addrOf(key);
+    if (!a || a.startsWith("log:") || !ADDR.test(a)) return null;
+    const cut = a.indexOf("/"), machine = cut > 0 ? a.slice(0, cut) : null;
+    const sp = key.startsWith("p:") ? compat.spaceOf(key.slice(2).replace(":", "/")) : null;
+    return { args: ["--agent", a.slice(cut + 1)], folder: sp?.folder || null, machine };
+  }
+  const t = compat.taskOf(key.split("/")[0]);
+  return t ? { args: [t.ref], folder: t.folder, machine: t.machine } : null;
+}
+
+/** herdr-task's settle | unsettle | snooze | wake for that chat, its answer as it gives it ({ ok, settled, was_snoozed,
+ *  until, when, … }), or { ok: false, error } with its words */
+export async function restAct(compat: Pick<Compat, "addrOf" | "taskOf" | "spaceOf">, b: { type: string; chat: string; in?: unknown; at?: unknown; snoozeUntil?: unknown }) {
+  const to = restTarget(compat, b.chat);
+  if (!to) return { ok: false, error: "That chat isn't here any more." };
+  const when = b.type !== "snooze" ? [] : typeof b.in === "string" && b.in.trim() ? ["--in", str(b.in, 80).trim()] : ["--at", str(b.at ?? "", 80).trim()];
+  if (b.type === "snooze" && !when[1]) return { ok: false, error: "Say when it wakes." };
+  const back = b.type === "unsettle" && Number.isFinite(Number(b.snoozeUntil)) && Number(b.snoozeUntil) > 0 ? ["--snooze-until", String(Math.round(Number(b.snoozeUntil)))] : [];
+  const r = await run(["herdr-task", ...(to.machine ? ["--on", to.machine] : []), b.type, ...to.args, ...when, ...back, ...(to.folder ? ["--folder", to.folder] : []), "--json"]);
+  let out: any = null;
+  try { out = JSON.parse(r.stdout); } catch {}
+  if (r.code !== 0 || !out || out.error) return { ok: false, error: out?.error || r.stderr.trim().split("\n").pop() || "herdr-task refused it." };
+  return { ok: true, ...out };
+}
+
+/** A snooze ended by the person (ASH-12): a message sent to it, a pin, or its Woke looked at. Quietly: nothing to say. */
+const wakeQuietly = (compat: Compat, key: string) => restAct(compat, { type: "wake", chat: key }).catch(() => null);
+/** whether the terminal behind a chat has a snooze set (core/settle.js's snoozed label) */
+const snoozedTerm = (hub: Hub, a: string | null) => !!a && Number((hub.terminals.get(a) as any)?.labels?.snoozed) > 0;
 
 function str(v: unknown, max = 100_000) {
   if (typeof v !== "string" || v.length > max) throw new Error("bad input");
@@ -246,8 +283,12 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     const now = new Set<string>(Array.isArray(sh.value("tasks.pinned")) ? sh.value("tasks.pinned") : []);
     if (b.on) now.add(t.pin); else now.delete(t.pin);
     await sh.set("tasks.pinned", [...now]);
+    // a pin ends its snooze (ASH-12): pinned to be seen
+    if (b.on && t.snoozed) await wakeQuietly(compat, b.chat);
     return { ok: true };
   }
+  // ASH-12 Settle and Snooze, as herdr-task does them (also a woken agent's chat looked at: wake clears its Woke)
+  if ((b?.type === "settle" || b?.type === "unsettle" || b?.type === "snooze" || b?.type === "wake") && typeof b.chat === "string") return restAct(compat, b);
   const bar = () => sh!.value("spaces-chat") ?? {};
   const sec = (id: unknown) => (typeof id === "string" && id.startsWith("s:") ? id.slice(2) : null);
   if (b?.type === "move" && typeof b.id === "string" && typeof b.to === "string" && sh) {
@@ -611,10 +652,12 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   }
   switch (b?.type) {
     case "send": {
+      // a new turn the person started in view ends its snooze (ASH-12), once it went in
+      const wake = <T>(r: T) => { if (snoozedTerm(hub, b.addr) && typeof b.chat === "string") void wakeQuietly(compat, b.chat); return r; };
       // one page's send asked again (its answer lost on the way, a reload, Retry): the same one, never twice
       const cid = typeof b.cid === "string" && b.cid ? b.cid.slice(0, 80) : null;
-      if (!cid) return sendNow(hub, b, compat);
-      return once(cid, (again) => sendNow(hub, b, compat, again));
+      if (!cid) return sendNow(hub, b, compat).then(wake);
+      return once(cid, (again) => sendNow(hub, b, compat, again)).then(wake);
     }
     case "steer": {
       // Send now on a message in Claude Code's own queue (#662): its Ctrl+Enter, only while its screen offers it

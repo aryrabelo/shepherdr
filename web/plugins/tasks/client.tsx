@@ -4,8 +4,9 @@
 // hidden behind its count at the end; the machine only in a space's heading when two machines share its name. Space:
 // Needs you, then one group per space. Status: one group per status. A filter row picks one status (All statuses,
 // Needs you, Working, Ready, the rest under More). Each status or Pinned heading folds what is under it away. This space, first in the filter row (kept on this device), narrows it all to the place picked. A row says where its task is, as far as the grouping doesn't; a Ready row has Review. A
-// row's menu only pins it (core/menus.js taskMenu, the window's too); the Assistant does the rest. Done tasks archive
-// themselves: the Archived row at the bottom opens them.
+// row's menu pins it, starts it later, and settles or snoozes it (core/menus.js taskMenu, the window's too; ASH-12:
+// rest.tsx); the Assistant does the rest. Settled and snoozed tasks are on two shelves at the very end, Snoozed then
+// Settled (folded until opened). Done tasks archive themselves: the Archived row at the bottom opens them.
 import clsx from 'clsx'
 import { openAccept, useAccepting } from '@client/screens/Accept.tsx'
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
@@ -34,6 +35,10 @@ import {
   pinTask,
   placeOf,
   scheduleTask,
+  taskChat,
+  SETTLED,
+  SETTLED_OPEN,
+  SNOOZED,
   registry,
   setFilter,
   setGroup,
@@ -78,9 +83,11 @@ import {
   XIcon,
   field,
 } from '@client/ui.tsx'
-import { doneNewestFirst, machineName, type Automation, type Place, type Snapshot, type Task } from '@shared/types.ts'
+import { doneNewestFirst, machineName, resting, type Automation, type Place, type Snapshot, type Task } from '@shared/types.ts'
 import { useFlip } from '@client/motion.ts'
 import { RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
+import { taskWho } from '@shared/alerts.ts'
+import { useRest, type MenuEntry } from './rest.tsx'
 import * as MN from '@core/menus.js'
 import * as TK from '@core/tasks.js'
 import * as ND from '@core/needs.js'
@@ -133,15 +140,17 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
       flip={t.id}
       sel={sel}
       kb={kb}
-      // its pie: the % done, while it works; an archived one is a done task's check
-      glyph={<TaskDot s={t.archived ? 'done' : t.status} w={t.archived || !t.report ? undefined : { ...t.report, eta: undefined }} />}
+      // its pie: the % done, while it works; an archived one is a done task's check; put away by hand (ASH-12), a quiet
+      // clock or check: no status colour on a shelf that isn't news
+      glyph={t.rest === 'snoozed' && !t.archived ? <ClockIcon aria-hidden className="size-3.5 text-fg3" /> : t.rest === 'settled' && !t.archived ? <CheckIcon aria-hidden className="size-3.5 text-fg3" />
+        : <TaskDot s={t.archived ? 'done' : t.status} w={t.archived || !t.report ? undefined : { ...t.report, eta: undefined }} />}
       ref_={refOf(t.id)}
       title={t.name}
       sub={t.sub}
       // Scheduled (SHEP-38): its time until it starts ("6h") in the same place, counted live, in grey
-      left={t.archived ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
+      left={t.archived || resting(t) ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
       leftQuiet={t.status === 'scheduled'}
-      dim={t.status === 'done'}
+      dim={t.status === 'done' || resting(t)}
       where={where?.join(' · ')}
       action={accept}
       // with ⌘ (Ctrl off a Mac), beside the focused pane in split view
@@ -215,17 +224,19 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
   )
 }
 
-type MenuEntry = { id?: string; label?: string; icon?: string; heading?: string; sep?: boolean; at?: string; in?: string; typed?: boolean }
 const OTHER = MN.SCHEDULE_OTHER as { placeholder: string; label: string; button: string }
 
 /** A task's one menu, in its row's ⋯ and its chat's, as 3.0's (core/menus.js taskMenu): Pin or Unpin; a task not started
  *  yet also Start later (SHEP-38): a few times, or one typed in herdr-task's words (Other time…), and a scheduled one
- *  Start now and Unschedule. What herdr-task refuses (a time it doesn't know) shows under it, the menu kept open. */
+ *  Start now and Unschedule. What herdr-task refuses (a time it doesn't know) shows under it, the menu kept open. A
+ *  task with a live agent first Settle (Unsettle) and Snooze, Wake while snoozed (ASH-12, rest.tsx). */
 function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
   const [typing, setTyping] = useState(false)
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const snap = useSnap()
+  const rest = useRest({ chat: taskChat(t), what: snap ? taskWho(snap, t.id) : refOf(t.id), rest: t.rest, restUntil: t.restUntil }, close)
   const go = async (when: Parameters<typeof scheduleTask>[1]) => {
     setBusy(true)
     setError(null)
@@ -234,11 +245,15 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
     if (r?.ok === false) setError(r.error ?? "Couldn't schedule it.")
     else close()
   }
-  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status })
+  // a snooze set (or woke, not looked at yet): Wake
+  const restOn = { can: !!t.canRest && !t.archived, rest: t.rest ?? null, snoozed: !!t.restUntil || !!t.woke }
+  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status, rest: restOn })
   return (
     <>
       {items.map((it, i) => {
         if (it.sep) return <MenuSeparator key={`sep${i}`} />
+        const own = rest.item(it, i)
+        if (own) return own
         if (it.heading) return <MenuLabel key={it.heading}>{t.status === 'scheduled' && t.sub ? `${it.heading} · ${capital(t.sub)}` : it.heading}</MenuLabel>
         if (it.id === 'schedule')
           return <MenuItem key={it.label} disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void go(it.in ? { in: it.in } : { at: it.at })}>{it.label}</MenuItem>
@@ -265,7 +280,7 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
           </MenuItem>
         )
       })}
-      {error && !typing ? <p role="alert" className="w-0 min-w-full px-2 pt-1 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{error}</p> : null}
+      {(error && !typing) || rest.error ? <p role="alert" className="w-0 min-w-full px-2 pt-1 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{rest.error ?? error}</p> : null}
     </>
   )
 }
@@ -484,18 +499,20 @@ function TaskList(_: { placeId: string }) {
   // what the search field holds: only what matches it shows, in its group (the window's matches())
   const asks = agentNeeds(snap, view.chips).filter((n) => !q || matches(q, n.who, n.why, n.where))
   const live = tasksIn(snap, view).filter((t) => !q || found(snap, t, q))
+  // put away by hand (ASH-12): on their shelves at the end, in no status of the filter row
+  const awake = live.filter((t) => !resting(t))
   const autos = autosIn(snap, view.chips).filter((a) => !q || matches(q, a.name, a.listName, a.machine ? machineName(snap.machines, a.machine) : undefined))
   // the chips' counts: what each status holds now, as far as the search lets it (Needs you: its tasks and what else
   // needs you)
-  const counts: Record<string, number> = { needs: live.filter((t) => t.status === 'need').length + asks.length, automations: autos.length }
-  for (const [k, st] of Object.entries(FILTER_STATUS)) counts[k] = live.filter((t) => t.status === st).length
+  const counts: Record<string, number> = { needs: awake.filter((t) => t.status === 'need').length + asks.length, automations: autos.length }
+  for (const [k, st] of Object.entries(FILTER_STATUS)) counts[k] = awake.filter((t) => t.status === st).length
   // Settings › Window › Status filters off: no row, all shown
   const filters = snap.look?.filters !== false
   const filter = filters && FILTER_ORDER.includes(wanted) && (counts[wanted] || q) ? wanted : 'all'
   const footer = q || filter !== 'all' ? null : registry.tasksFooter.map((F, i) => <F key={i} place={place} list={view} />)
   // one status picked: its rows alone, no headings, each saying its space
   if (filter !== 'all') {
-    const rows = filter === 'needs' ? live.filter((t) => t.status === 'need') : filter === 'automations' ? [] : live.filter((t) => t.status === FILTER_STATUS[filter])
+    const rows = filter === 'needs' ? awake.filter((t) => t.status === 'need') : filter === 'automations' ? [] : awake.filter((t) => t.status === FILTER_STATUS[filter])
     const shown = filter === 'done' ? doneNewestFirst(rows) : rows
     const what = filter === 'needs' ? 'tasks that need you' : filter === 'automations' ? 'automations' : `${STATUS[filter]} tasks`
     const any = shown.length || (filter === 'needs' && asks.length) || (filter === 'automations' && autos.length)
@@ -562,7 +579,8 @@ function TaskList(_: { placeId: string }) {
           const fold: Fold | undefined = q ? undefined : { shut: g.shut, toggle: (all) => toggleShut(key, g.key, all ? groups.filter((x) => x !== g).map((x) => x.key) : []) }
           const extra = g.key === askKey ? asks : []
           // For you: a space's work under its name, a tap opening its chat
-          if (by === 'you' && g.key !== 'you' && g.key !== 'pinned' && g.key !== 'done') {
+          const shelf = g.key === SNOOZED || g.key === SETTLED
+          if (by === 'you' && g.key !== 'you' && g.key !== 'pinned' && g.key !== 'done' && !shelf) {
             const p = g.place ? snap.places.find((x) => x.id === g.place) : undefined
             return (
               <div key={g.key}>
@@ -575,7 +593,9 @@ function TaskList(_: { placeId: string }) {
           if (by === 'you' && g.key === 'done' && g.shut) {
             return <DoneLine key="done" count={g.count} today={g.count === live.filter((t) => t.status === 'done' && !t.archived && !t.pinned && isToday(t.doneAt)).length} onClick={() => toggleShut(key, DONE_OPEN)} />
           }
-          const doneFold: Fold | undefined = by === 'you' && g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) } : fold
+          // Settled (ASH-12) folds open and shut by its own key, shut until opened
+          const doneFold: Fold | undefined = by === 'you' && g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) }
+            : g.key === SETTLED && !q ? { shut: g.shut, toggle: () => toggleShut(key, SETTLED_OPEN) } : fold
           return (
             <div key={g.key}>
               {g.key === 'you' ? (

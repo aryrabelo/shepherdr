@@ -33,6 +33,11 @@ connection it came on). A page from anywhere else can't change anything: writes 
 - The logic both sides share is in `core/` (plain JavaScript): the mods get copies (`bin/sync-shared`), the service
   imports it. `lib/features.json` lists every feature with its Herdr side, its web side and its shared logic; CI
   checks both sides are there.
+- What the page changes on a task or an agent goes through the same CLI as the window's: herdr-task. Settle and
+  Snooze (ASH-12, `core/settle.js`) too: the page's `settle`, `unsettle`, `snooze` and `wake` actions run
+  `herdr-task [--on <machine>] <verb> <task ref> | --agent <terminal> … --json` (`service/actions.ts` restAct); the
+  snapshot carries each task's and Assistant's `rest`, `restAt`, `restUntil` and `woke` from their terminals' labels,
+  and leaves what is put away out of needs, counts, toasts and push.
 
 ## Native on both sides
 

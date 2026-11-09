@@ -21,6 +21,9 @@
 // chat); an agent whose resumed session is gone starts a new one by itself (lostSession());
 // /model opens the model picker instead of reaching the CLI; long replies fold with Show more;
 // a day's line (Today, Yesterday, ...) goes where a new day starts.
+// Settle and Snooze (ASH-12, core/settle.js): chat.settle (Ctrl+Shift+S) settles the agent in view, or unsettles it
+// (rest.js: herdr-task, with an undo toast); a woke agent looked at here, or a snoozed one written to, is awake again;
+// a settled or snoozed agent makes no sound and no toast.
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHandle, TextView, v_virtual_list, InputState, Input } from "gpui-base";
@@ -60,6 +63,8 @@ const DICT_SLOW = 5000;
 import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, FILES as THREAD_FILES, CHANGES as THREAD_CHANGES, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
+import { stillSettled, napping, woke, notNews, wordOf } from "./core/settle.js";
+import { settle, unsettle, wake, wakeSeen } from "./rest.js";
 import { ScreenWatch, screenStrips, openCard, cardsOf, starting, mayStart, cliOf } from "./screens.js";
 import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
@@ -557,6 +562,7 @@ export default class Chat extends View {
         if (c === "call" && addonOn("voice")) this.toggleCall(cx);
         if (c === "mute") this.callMute(cx);
         if (c === "find") this.openFind(cx);
+        if (c === "settle") this.settleKey();
         cx.notify();
       }
     });
@@ -1408,6 +1414,9 @@ export default class Chat extends View {
       // In the agent's terminal now: it's sent. The log has it only once taken, so it shows as
       // sent from here.
       p.delivered = true;
+      // A new turn the person started (ASH-12): a snooze is over.
+      const k = terminals().find((x) => x.address === this.addr);
+      if (k && (napping(k) || woke(k))) wake({ agent: this.addr }, null, { quiet: true });
       cx.notify();
       // Mid-turn, Claude Code holds a typed message until its turn ends ("ctrl+enter to send
       // now"): send it now, so the agent takes it at once (it steers).
@@ -4028,6 +4037,8 @@ export default class Chat extends View {
     const mine = this.myPane();
     const parked = Boolean(k) && !panes().some((p) => p.terminal === this.addr);
     const looking = Boolean(mine) && focused()?.pane === mine && window()?.active;
+    // Woke from a snooze and looked at now (ASH-12): it's over, the Woke mark goes (rest.js, once).
+    if (k && woke(k) && (looking || (!this.thread && onScreen(k)))) wakeSeen(this.addr);
     if (parked && looking && st === "done") {
       const seen = shared("chat.seen") ?? {};
       if (seen[this.addr] !== k.turn) setShared("chat.seen", { ...seen, [this.addr]: k.turn });
@@ -4036,6 +4047,8 @@ export default class Chat extends View {
     this.lastStatus = st;
     if (!parked || before === undefined || before === st || !mine) return;
     if (st !== "blocked" && !(st === "done" && !looking)) return;
+    // Settled or snoozed by hand isn't news (core/settle.js): no sound, no toast (asking still is).
+    if (notNews(k, st)) return;
     // An Assistant follows its space's Notify (notify.js): a new reply only on All, nothing on Off.
     if (assistant(k) && !notifies(k, st === "done" ? "message" : "need")) return;
     if (settings()?.sounds?.enabled !== false) playSound(st);
@@ -4085,6 +4098,20 @@ export default class Chat extends View {
   // card, the latest.
   openArtifact(row) {
     openViewer({ id: row.art, title: row.title, version: row.line && row.v ? row.v : row.version, latest: row.version, machine: this.machine ?? null }, this.paneArea());
+  }
+
+  // chat.settle (ASH-12): the agent in view settled, as its row's or header's Settle, or unsettled when it is. A task's
+  // thread settles its task (its live agents, herdr-task settle <ref>), else the agent. Not while it works or asks.
+  settleKey() {
+    const k = terminals().find((x) => x.address === this.addr && x.state === "live");
+    if (!k) return;
+    const word = wordOf(k);
+    const key = this.taskKey;
+    const task = this.thread && this.taskRef && key?.folder ? { machine: key.machine ?? null, folder: key.folder, ref: this.taskRef } : null;
+    const x = task ?? { agent: this.addr };
+    const what = task ? this.taskRef : toastWho(k);
+    if (stillSettled(k, word)) unsettle(x, what);
+    else if (word !== "working" && word !== "blocked") settle(x, what);
   }
 
   myPane() {

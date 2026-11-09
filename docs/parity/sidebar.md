@@ -104,6 +104,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | After the name | main.js:598-616 `gitTail`: machine in Pinned, repo/branch (no ↑ahead ↓behind since SHEP-32) | P:322 core/spaces.js `gitTail` | ✓ |
 | Two spaces with one name | main.js:619 its folder, from ~ | P:302 `sharedNames`, `tilde` (core/spaces.js) | ✓ (was missing) |
 | Counts | main.js:662 red (needs you), green (Ready), 9+; Red counts / Green counts switches | P:352 `AttentionBadge` | ✓ (were hidden on unreachable spaces) |
+| Settled or snoozed is no news (ASH-12) | a settled or snoozed task or Assistant counts in neither red nor green and never makes its row bold (core `isUnread`, `notNews`) | service/model.ts `spaceCounts`, compat `needs` without them, src/attention.ts `attentionCounts`/`actionable` (`resting`), unread from core `isUnread` | ✓ |
 | Worktree nesting | main.js:305-325 under its repo's space, branch icon; Worktrees in the sidebar off hides them but the open one | P:209 `nest`, `look.worktrees` | ✓ |
 | Click | main.js:529 selects | P:538 goes there | ✓ (2.1's ⌘-click split view removed) |
 | Right-click menu | main.js:649 at the pointer, core/menus.js `spaceMenu`; worktree rows too | P:585 at the pointer, a held finger; P:417 the same items; worktree rows too | ✓ (also on spaces of an unreachable machine now) |
@@ -116,4 +117,4 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Alt+Shift+↑/↓ on a focused row | none | P:156 `moveKey` | ◇ the keyboard's form of the window's drag |
 | Rail (sidebar under 160 px) | main.js:666 numbers and a status glyph | none | ◇ the web hides the sidebar instead of narrowing it |
 
-Counts: ✓ 61, ◇ 11, ✗ 0.
+Counts: ✓ 62, ◇ 11, ✗ 0.

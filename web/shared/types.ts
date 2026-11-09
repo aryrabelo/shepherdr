@@ -128,6 +128,16 @@ export interface Place {
   /** its repo's name and branch (null: detached), as the window's row */
   gitName?: string
   branch?: string | null
+  /** its Assistant, as for a task: ASH-12 Settle and Snooze (its header's ✓ and clock) */
+  /** settled: until new work; snoozed: out of sight until
+   *  restUntil. Either is no news: in no count, toast or push. */
+  rest?: 'settled' | 'snoozed'
+  /** settled: when (ms) */
+  restAt?: number
+  /** a snooze set: when it wakes (ms); set while it shows meanwhile because it needs you, too */
+  restUntil?: number
+  /** its snooze ran out and nobody has looked yet (ms it woke): "Woke" until its chat is seen */
+  woke?: number
 }
 
 /** A machine, as a heading over its spaces in the sidebar: no chat, nothing to open. How it is doing shows on it and in
@@ -300,6 +310,17 @@ export interface Task {
   place: string
   /** second line in lists */
   sub?: string
+  /** ASH-12 Settle and Snooze (core/settle.js): put away by hand. settled: until new work; snoozed: out of sight until
+   *  restUntil. Either is no news: in no count, toast or push. */
+  rest?: 'settled' | 'snoozed'
+  /** settled: when (ms) */
+  restAt?: number
+  /** a snooze set: when it wakes (ms); set while it shows meanwhile because it needs you, too */
+  restUntil?: number
+  /** its snooze ran out and nobody has looked yet (ms it woke): "Woke" until its chat is seen */
+  woke?: number
+  /** it has a live agent of its own to settle or snooze (its row menu offers them) */
+  canRest?: boolean
   /** Working: the minutes left under its row's dot, in the window's words ("6m", "<1m", "2h"), once its agent gave them;
    *  Scheduled: the time until it starts ("6h", "2d") */
   left?: string
@@ -801,6 +822,10 @@ export const machineName = (machines: Machine[] | undefined, machine?: string) =
 export const doneNewestFirst = <T extends Pick<Task, 'status' | 'doneAt'>>(ts: T[]): T[] =>
   [...ts.filter((t) => t.status !== 'done'), ...ts.filter((t) => t.status === 'done').sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0))]
 
+/** ASH-12: settled or snoozed by hand (a task, or a space's Assistant): on its own shelf, and no news (no count, toast
+ *  or push) */
+export const resting = (t: { rest?: 'settled' | 'snoozed' } | null | undefined) => t?.rest === 'settled' || t?.rest === 'snoozed'
+
 /** a mode's name: "Autopilot" */
 /** the row of a space's Autopilot settings that says why it can't run there */
 export const PILOT_BLOCKED = "Can't run"
@@ -1290,6 +1315,10 @@ export type Action =
   /** SHEP-38: start a task that hasn't started by itself later (herdr-task edit --at / --in, the words as typed), take that
    *  back (off: back to To do) or start a scheduled one now */
   | { type: 'schedule'; chat: string; at?: string; in?: string; off?: boolean; now?: boolean }
+  /** ASH-12 Settle and Snooze (herdr-task settle | unsettle | snooze | wake): a task's chat (its live agents) or an
+   *  Assistant's (its terminal). snooze: in or at, herdr-task's words; unsettle: snoozeUntil puts back a snooze that
+   *  hasn't run out (Undo of a settle). Answers with herdr-task's (was_snoozed, until, when), or { ok: false, error }. */
+  | { type: 'settle' | 'unsettle' | 'snooze' | 'wake'; chat: string; in?: string; at?: string; snoozeUntil?: number }
   /** delete a task: its agent, herdr space, worktree, branch, chat and record; refused while it holds work, unless force */
   | { type: 'delete'; chat: string; force?: boolean }
   /** forget a space (shepherdr space remove): its folder and code stay on disk, its coordinator closes, and its open

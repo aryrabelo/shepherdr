@@ -18,6 +18,28 @@ import * as N from "../core/notify.js";
 const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
 const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
+import * as RS from "../core/settle.js";
+const { restFields, stillSettled, hidden, snoozedUntil, parseSettled, wordOf, woke } = RS as any;
+
+/** ASH-12: an Assistant put away by hand (core/settle.js), as its header and the sidebar read it: settled (until new
+ *  work), snoozed (out of sight until `until`), or woke (its snooze ran out, not looked at yet: the label stays until
+ *  then). An Assistant asking you is never out of sight. */
+export function assistantRest(k: any, now = Date.now()) {
+  if (!k) return null;
+  const word = wordOf(k), until = snoozedUntil(k);
+  if (stillSettled(k, word)) return { rest: "settled" as const, at: parseSettled(k.labels?.settled)?.at ?? null };
+  if (hidden(k, word, [], now)) return { rest: "snoozed" as const, until };
+  if (woke(k, now)) return { rest: null, woke: until };
+  // snoozed, but asking you meanwhile: it shows, its snooze still set (Wake ends it)
+  return until > now ? { rest: null, until, showing: true } : null;
+}
+
+/** What a space's row counts (the window's): its tasks that need you, its Assistant asking, and Ready tasks; a task
+ *  settled or snoozed (ASH-12) counts in neither. */
+export function spaceCounts(here: { section: string; rest?: string | null }[], assistantBlocked: boolean) {
+  const awake = here.filter((r) => !r.rest);
+  return { red: awake.filter((r) => r.section === "needs").length + (assistantBlocked ? 1 : 0), green: awake.filter((r) => r.section === "ready").length };
+}
 
 const SHARED = join(HOME, ".config", "herdr-app", "shared.json");
 const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$/;
@@ -207,7 +229,7 @@ export class Model {
   /** A task's agents now: live terminals labelled with its key, on the folder's machine, not shells. */
   private agentsOf(list: List, task: any) {
     const key = `${list.slug}#${task.id}`;
-    const out: { address: string; status: string | null; role: string; turn: number }[] = [];
+    const out: { address: string; status: string | null; role: string; turn: number; settled: string | null; snoozed: string | null }[] = [];
     for (const k of this.hub.terminals.values()) {
       if (k.state !== "live" || k.labels?.["herdr.task"] !== key || machineOf(k.address) !== (list.machine ?? null)) continue;
       const st = typeof k.status === "object" ? k.status?.state ?? null : null;
@@ -215,7 +237,8 @@ export class Model {
       // its worker's own helper (SHEP-54: its reviewer, an hc child): never one of its agents (helpersOf)
       if (isHelper(k)) continue;
       // turn: its finished turns, for a Ready task back at work (core busyAgain())
-      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0 });
+      // settled and snoozed: its ASH-12 labels, which core place() reads for the task's rest
+      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0, ...restFields(k) });
     }
     return out;
   }
@@ -246,6 +269,8 @@ export class Model {
       const last = task.agents?.[task.agents.length - 1];
       return {
         key: taskKey(list, task), ref: refOf(list, task), title: task.title, section: p.section, needs: p.needs,
+        // ASH-12: settled or snoozed by hand (core/settle.js taskRest): its own shelf, and never news
+        rest: p.rest ?? null, restInfo: p.restInfo ?? null,
         sub: secondLine(p, w, p.section === "queued" ? queueReason(list, task, running) : null), left: leftOf(p, w), pct: w?.done ?? null,
         // what its agent last said (core reportOf), as the window's task header shows it: working, and frozen while it
         // needs the person
@@ -285,12 +310,13 @@ export class Model {
         changedAt: Math.max(0, ...(s.tabs ?? []).flatMap((t: any) => t.terminals ?? []).map((a: string) => Number((this.hub.terminals.get(a) as any)?.status_ms) || 0)),
         section: bar.sections.find((x: any) => (x.spaces ?? []).includes(s.id))?.id ?? null,
         assistant: k?.address ?? null, turn: (k as any)?.turn ?? 0, assistantStatus: (k as any)?.status?.state ?? null,
+        // ASH-12: its Assistant settled or snoozed (its header's Settle and Snooze)
+        assistantRest: assistantRest(k),
         autopilot: this.pilotOf(s.id).on ? { next: this.pilotOf(s.id).next_run ?? null } : null,
         git: this.gitOf(s),
         pilot: this.pilotOf(s.id),
         unread: isUnread(k, seen) && spaceLevel(this.value("notify") ?? {}, s.id) !== "Off",
-        red: here.filter((r) => r.section === "needs").length + ((k as any)?.status?.state === "blocked" ? 1 : 0),
-        green: here.filter((r) => r.section === "ready").length,
+        ...spaceCounts(here, (k as any)?.status?.state === "blocked"),
       };
     });
     this.spaces = spaces;

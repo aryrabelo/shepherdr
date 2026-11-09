@@ -15,7 +15,7 @@ import { follow } from '@client/gestures.ts'
 import { goChat, openNeeds, openTask, useSnap, useStore, visibleChats } from '@client/kernel.ts'
 import { XIcon } from '@client/ui.tsx'
 import { notifies, taskWho } from '@shared/alerts.ts'
-import { taskChatId, type Snapshot } from '@shared/types.ts'
+import { resting, taskChatId, type Snapshot } from '@shared/types.ts'
 import * as T from '@core/toasts.js'
 
 /** key: one event's, a later toast with it changes this one; who: whom it is about; need: someone needs you (task: a
@@ -60,7 +60,8 @@ function news(was: Snapshot, now: Snapshot, looking: string[]) {
   // a task's agent that stopped working without needing you (Needs you said that), while its chat wasn't on screen
   const working = new Set(was.tasks.filter((t) => t.status === 'work').map((t) => t.id))
   for (const t of now.tasks) {
-    if (!working.has(t.id) || t.status === 'work' || t.status === 'need' || t.archived) continue
+    // settled or snoozed (ASH-12): no news
+    if (!working.has(t.id) || t.status === 'work' || t.status === 'need' || t.archived || resting(t)) continue
     if (looking.some((c) => taskChatId(c) === t.id)) continue
     const w = taskWho(now, t.id)
     out.push({ key: `done:${t.id}`, who: w, title: T.toastTitle(w, T.FINISHED), body: t.name, level: 'success', go: () => openTask(t.id) })
@@ -68,7 +69,7 @@ function news(was: Snapshot, now: Snapshot, looking: string[]) {
   // an Assistant that finished its turn: a new reply, which only All brings
   const busy = new Set(was.places.filter((p) => p.status === 'work').map((p) => p.id))
   for (const p of now.places) {
-    if (!busy.has(p.id) || p.status === 'work' || p.status === 'need' || seen(p.chat)) continue
+    if (!busy.has(p.id) || p.status === 'work' || p.status === 'need' || seen(p.chat) || resting(p)) continue
     if (!notifies(now, { go: { place: p.id }, message: true })) continue
     const w = T.assistantWho(p.name)
     out.push({ key: `done:${p.chat}`, who: w, title: T.toastTitle(w, T.FINISHED), level: 'success', go: () => goChat(p.chat) })

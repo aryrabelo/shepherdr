@@ -40,6 +40,8 @@ export const NAMES = {
   "chat.dictate": () => "Dictate",
   "chat.call": () => "Start a call",
   "chat.find": () => "Find in the chat",
+  // ASH-12: put the agent in view away until new work (core/settle.js), or bring it back
+  "chat.settle": () => "Settle or unsettle the agent",
 };
 
 // What a terminal key types, by its text.
@@ -134,7 +136,7 @@ export const WEB_KEYS = {
     "ctrl-shift-k": "mod.open:jump", "ctrl-k": "mod.open:jump",
     "ctrl-,": "app.settings",
   },
-  "mod:chat": { "ctrl-shift-d": "chat.dictate", "ctrl-shift-space": "chat.call", "ctrl-f": "chat.find" },
+  "mod:chat": { "ctrl-shift-d": "chat.dictate", "ctrl-shift-space": "chat.call", "ctrl-f": "chat.find", "ctrl-shift-s": "chat.settle" },
   "layout:shepherdr": { "shift-f2": "tabs-tasks.rename-space" },
 };
 
