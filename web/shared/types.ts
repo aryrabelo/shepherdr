@@ -324,6 +324,9 @@ export interface Task {
   place: string
   /** second line in lists */
   sub?: string
+  /** ASH-14: its second line once back among the rest (put away or woke: core secondLine without its rest), which an
+   *  Unsettle or a Wake shows at once */
+  awakeSub?: string
   /** ASH-12 Settle and Snooze (core/settle.js): put away by hand. settled: until new work; snoozed: out of sight until
    *  restUntil. Either is no news: in no count, toast or push. */
   rest?: 'settled' | 'snoozed'

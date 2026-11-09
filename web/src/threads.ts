@@ -19,13 +19,14 @@ type Restable = { rest?: Rest; restAt?: number; restUntil?: number; woke?: numbe
 
 const shownRest = RSc.shownRest as (info: RestInfo, mark: RestMark | undefined, now?: number) => { info: RestInfo; keep: boolean }
 const marksWith = RSc.marksWith as (marks: RestMarks, key: string, mark: RestMark | null, now?: number) => RestMarks
+const marksAfter = RSc.marksAfter as (marks: RestMarks, key: string, asked: RestMark, mark: RestMark | null, now?: number) => RestMarks
 const restMark = RSc.restMark as (verb: string, until?: number | null, at?: number) => RestMark
 const isThread = THc.isThread as (section: string, rest?: Rest | null) => boolean
 const agentSection = THc.agentSection as (word: string | null) => 'needs' | 'working' | 'idle'
 const agentLine = THc.agentLine as (word: string | null, info: RestInfo, now?: number) => string | null
 const threadsOf = THc.threadsOf as <T extends { key: string; section: string; rest: Rest | null; restInfo: RestInfo; at: number }>(items: T[]) => { open: T[]; snoozed: T[]; settled: T[] }
 
-export { marksWith, restMark }
+export { marksAfter, marksWith, restMark }
 
 /** a task's chat key, as its row menu's actions name it */
 export const taskChat = (t: Task): string => t.agent?.chat ?? `${t.id}/Agent`
@@ -48,13 +49,39 @@ export function marked<T extends Restable>(x: T, mark: RestMark | undefined, now
 }
 
 /** a task as it shows with its mark: its second line says its new rest (core/threads.js agentLine's words, as
- *  core/tasks.js secondLine's), never the old one's */
+ *  core/tasks.js secondLine's), never the old one's; back among the rest (Unsettle, Wake), the line it has awake
+ *  (compat awakeSub: core secondLine without its rest, "Próximo: …"), never none */
 export function markedTask(t: Task, mark: RestMark | undefined, now = Date.now()): Task {
   const m = marked(t, mark, now)
   if (m === t) return t
-  const line = agentLine(null, restInfoOf(m), now) ?? (t.rest ? undefined : t.sub)
+  const line = agentLine(null, restInfoOf(m), now) ?? t.awakeSub ?? (t.rest ? undefined : t.sub)
   const { sub: _sub, ...own } = m
   return { ...own, ...(line ? { sub: line } : {}) }
+}
+
+/** what Ctrl+Shift+S (chat.settle) puts away or back for the chat in view (key), as it shows with its mark: a task's
+ *  (its agent's chat; or the task open with no agent at all, when the key fell back to its space's chat), one that can
+ *  be settled (canSettle: with no live agent too); an agent of its space's own in a tab (a thread); a space's live
+ *  Assistant. null: nothing there to settle. */
+export type SettleTarget = { chat: string; rest?: Rest; restUntil?: number; task?: Task; tab?: PlaceTab; place?: Place }
+export function settleTarget(snap: Snapshot, key: string, openTask: string | null, marks: RestMarks = {}, now = Date.now()): SettleTarget | null {
+  const own = snap.places.find((x) => x.chat === key)
+  const task = snap.tasks.find((x) => x.agent?.chat === key) ?? (own && openTask ? snap.tasks.find((x) => x.id === openTask && !x.agent) : undefined)
+  if (task) {
+    if (!task.canSettle || task.archived) return null
+    const m = marked(task, marks[taskChat(task)], now)
+    return { chat: taskChat(task), rest: m.rest, restUntil: m.restUntil, task }
+  }
+  const tab = snap.places.flatMap((x) => x.tabs ?? []).find((x) => x.term === key && x.thread)
+  if (tab) {
+    const m = marked(tab, marks[key], now)
+    return { chat: key, rest: m.rest, restUntil: m.restUntil, tab }
+  }
+  if (own?.assistantTab?.live) {
+    const m = marked(own, marks[key], now)
+    return { chat: key, rest: m.rest, restUntil: m.restUntil, place: own }
+  }
+  return null
 }
 
 /** the tasks as they show with the marks on this device */

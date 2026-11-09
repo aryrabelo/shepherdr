@@ -394,7 +394,7 @@ export class Compat {
         state: r.section, on: r.machine ?? host, created: "", ...(r.folder ? { taskFolder: r.folder } : {}),
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
-        ...(r.sub ? { sub: r.sub } : {}),
+        ...(r.sub ? { sub: r.sub } : {}), ...(r.awakeSub ? { awakeSub: r.awakeSub } : {}),
         // ASH-12: settled or snoozed by hand (its own shelf at the end of a list, never news), and whether it can be: a
         // live agent of its own to label
         ...restOf(r.restInfo), ...(r.worker ? { canRest: true } : {}),

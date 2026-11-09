@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { marksLeft, placeThreads, restMark, withMarks, type RestMarks } from './threads.ts'
+import { marksAfter, marksLeft, placeThreads, restMark, settleTarget, withMarks, type RestMarks } from './threads.ts'
 import type { Place, PlaceTab, Snapshot, Task } from '@shared/types.ts'
 import * as RS from '@core/settle.js'
 
@@ -77,5 +77,39 @@ describe('rows put away at once (ASH-14 marks)', () => {
     expect(marksLeft(snapOf(tasks, [tab('t:t7', 'idle')]), marks, NOW + 1000)).toBe(marks)
     const agreed = snapOf([{ ...tasks[0], rest: 'settled', restAt: NOW }, tasks[1]], [tab('t:t7', 'idle', { rest: 'snoozed', restUntil: NOW + 60_000 })])
     expect(marksLeft(agreed, marks, NOW + 1000)).toEqual({})
+  })
+})
+
+describe('ASH-14 review', () => {
+  test('Unsettle or Wake shows the line it has awake at once, never none (item 6)', () => {
+    const t = task('S-1', 'ready', { rest: 'settled', restAt: 100, sub: 'Settled 2m ago', awakeSub: 'Próximo: abrir o PR' })
+    expect(withMarks([t], { 'S-1/worker': restMark('unsettle', null, NOW) }, NOW + 10)[0].sub).toBe('Próximo: abrir o PR')
+    const nap = task('S-2', 'working', { rest: 'snoozed', restUntil: NOW + 3600_000, sub: 'Wakes Today 18:00', awakeSub: 'Fixing the login' })
+    expect(withMarks([nap], { 'S-2/worker': restMark('wake', null, NOW) }, NOW + 10)[0].sub).toBe('Fixing the login')
+    // its mark spent (the snapshot agrees): the snapshot's own line
+    expect(withMarks([{ ...t, rest: undefined, restAt: undefined, sub: 'Ready 1m ago' }], { 'S-1/worker': restMark('unsettle', null, NOW) }, NOW + 10)[0].sub).toBe('Ready 1m ago')
+  })
+
+  test('Ctrl+Shift+S: a task with no live agent, an agent’s own tab, the Assistant; each as it shows with its mark (item 1)', () => {
+    const stopped = task('S-1', 'needs', { agent: undefined, canSettle: true })
+    const working = task('S-2', 'working', { canSettle: true, canRest: true, rest: 'settled', restAt: 5 })
+    const agentTab = tab('t:t7', 'idle', { rest: 'settled', restAt: 9 })
+    const p = { ...place([agentTab]), assistantTab: { live: true } } as unknown as Place
+    const snap = { tasks: [stopped, working, task('S-3', 'done', { canSettle: false })], places: [p] } as unknown as Snapshot
+    // the task open with no agent at all: the key falls back to its space's chat, the task is what's settled
+    expect(settleTarget(snap, 'p:sp1', 'S-1')).toMatchObject({ chat: 'S-1/Agent', task: stopped })
+    expect(settleTarget(snap, 'S-2/worker', null)).toMatchObject({ chat: 'S-2/worker', rest: 'settled' })
+    // marked a moment ago (Unsettle): it shows awake, so the key settles it again
+    expect(settleTarget(snap, 'S-2/worker', null, { 'S-2/worker': restMark('unsettle', null, NOW) }, NOW + 10)?.rest).toBeUndefined()
+    expect(settleTarget(snap, 't:t7', null)).toMatchObject({ chat: 't:t7', rest: 'settled', tab: agentTab })
+    expect(settleTarget(snap, 'p:sp1', null)).toMatchObject({ chat: 'p:sp1', place: p })
+    expect(settleTarget(snap, 'S-3/worker', null)).toBeNull()
+  })
+
+  test('a late answer leaves a newer action’s mark alone (item 7)', () => {
+    const slow = restMark('snooze', null, NOW), wake = restMark('wake', null, NOW + 5)
+    const marks: RestMarks = { 't:t7': wake }
+    expect(marksAfter(marks, 't:t7', slow, restMark('snooze', NOW + 3600_000, slow.at))).toBe(marks)
+    expect(marksAfter(marks, 't:t7', wake, null)).toEqual({})
   })
 })

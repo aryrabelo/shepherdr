@@ -265,6 +265,8 @@ export class Model {
         canSettle: taskCan(p.section, live).settle,
         activity: taskActivity(task, Math.max(0, ...live.map((a) => Number((this.hub.terminals.get(a.address) as any)?.status_ms) || 0))),
         sub: secondLine(p, w, p.section === "queued" ? queueReason(list, task, running) : null), left: leftOf(p, w), pct: w?.done ?? null,
+        // ASH-14: its line once back among the rest (an Unsettle or a Wake shows it at once, before herdr-task answers)
+        awakeSub: p.restInfo ? secondLine({ ...p, rest: null, restInfo: null }, w, p.section === "queued" ? queueReason(list, task, running) : null) : null,
         // what its agent last said (core reportOf), as the window's task header shows it: working, and frozen while it
         // needs the person
         said: w?.text ? { text: w.text, done: w.done ?? null, left: w.left ?? null, paused: !!w.paused } : null,
