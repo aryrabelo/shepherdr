@@ -22,6 +22,7 @@ import * as RS from "../core/settle.js";
 const { restFields, agentRest, taskCan } = RS as any;
 import * as TH from "../core/threads.js";
 const { taskActivity } = TH as any;
+import { Folders, folderGroups, type FolderGroup } from "./folders.ts";
 
 /** What a space's row counts (the window's): its tasks that need you, its Assistant asking, and Ready tasks; a task
  *  settled or snoozed (ASH-12) counts in neither. */
@@ -53,12 +54,16 @@ export class Model {
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Told each build: what the screen's snapshot is made from (compat.ts). */
-  onBuild: ((b: { spaces: any[]; sections: any[]; rows: any[]; machines: string[]; known: { name: string; state: string }[]; automations: any[] }) => void) | null = null;
+  onBuild: ((b: { spaces: any[]; sections: any[]; folders: FolderGroup[]; rows: any[]; machines: string[]; known: { name: string; state: string }[]; automations: any[] }) => void) | null = null;
+
+  /** The person's space folders (ASH-15, ~/.config/herdr-space-folders.json): read with each refresh; a change from the
+   *  page builds the snapshot again. */
+  folders = new Folders();
 
   /** The service's shared document (the person's pins, sidebar and Notify, in step with the window: lib/bridge.js). */
   doc: () => Record<string, any> = () => ({});
 
-  constructor(private hub: Hub, private live: Live) {}
+  constructor(private hub: Hub, private live: Live) { this.folders.onChange = () => this.soon(); }
 
   /** A shared value: the document's, else the window's own (a window not on 3.1 yet). */
   value(key: string) { const d = this.doc(); return key in d ? d[key] : this.shared[key]; }
@@ -129,6 +134,7 @@ export class Model {
       this.known = r.machines.filter((m) => !m.temporary).map((m) => ({ name: m.name, state: String(m.state ?? "") }));
     } catch {}
     this.readShared();
+    this.folders.read();
     await Promise.all([this.readAutopilot(), this.readDocs(), this.readLists(null), ...this.machines.map((m) => this.readLists(m))]);
     this.build();
   }
@@ -319,6 +325,8 @@ export class Model {
     this.live.put("spaces", { spaces, sections: bar.sections });
     // each list's automations (herdr-task auto), with the folder and machine they belong to, for 3.0's Automations group
     const automations = lists.flatMap((l: any) => (Array.isArray(l.automations) ? l.automations : []).map((a: any) => ({ ...a, folder: l.folder, machine: l.machine ?? null, list: l.name })));
-    this.onBuild?.({ spaces, sections: bar.sections, rows, machines: this.machines, known: this.known, automations });
+    // ASH-15: this machine's spaces in the person's folders (not pinned, in no section)
+    const folders = folderGroups(this.folders.data, spaces);
+    this.onBuild?.({ spaces, sections: bar.sections, folders, rows, machines: this.machines, known: this.known, automations });
   }
 }

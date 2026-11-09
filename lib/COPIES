@@ -14,6 +14,7 @@ core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toast
 core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts pane-chat
 core/tasks.js: chat jump tasks pane-chat spaces-chat
 core/threads.js: spaces-chat
+core/folders.js: spaces-chat
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
 keyholder.js: chat tasks

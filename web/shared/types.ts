@@ -167,6 +167,19 @@ export interface Section {
   spaces: string[]
 }
 
+/** ASH-15: one of the person's space folders (~/.config/herdr-space-folders.json, the space-folders mod's: core/folders.js),
+ *  id f:<its id>, on the machine serving the page: its spaces not pinned and in no section, in Herdr's order */
+export interface Folder {
+  id: string
+  name: string
+  /** its color as the window's avatars draw it (core folderColor); none: grey */
+  color?: string
+  /** folded in the file (both layouts fold it) */
+  folded: boolean
+  machine: string
+  spaces: string[]
+}
+
 export interface Machine {
   /** Core native display name, before a Shepherdr-only rename. */
   ownName?: string
@@ -1272,6 +1285,8 @@ export interface Snapshot {
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
+  /** the person's space folders (ASH-15), in the file's order; none without the file */
+  folders?: Folder[]
 }
 
 export type Action =
@@ -1359,6 +1374,8 @@ export type Action =
   | { type: 'section'; op: 'delete'; id: string }
   /** the last section deleted, back in its place (its toast's Undo, as the window's) */
   | { type: 'section'; op: 'restore' }
+  /** ASH-15: a space folder (f:<id>) folded or opened, in its file */
+  | { type: 'folder'; op: 'fold'; id: string }
   /** a machine's or space's name as it shows everywhere ('' gives it back its own); kept by the main machine (id,
       not place: never sent on to another), and nothing else changes: its folder, repo, herdr space and task ids stay */
   /** a machine's or section's emoji too: '' takes it away, none leaves it */
