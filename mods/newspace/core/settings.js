@@ -3,7 +3,7 @@
 // web app's Settings say the same. herdr-task reads the file (herdr_task/settings.py: settings_for); its defaults are
 // DEFAULTS there and here.
 // Shared core: the source is core/settings.js; bin/sync-shared copies it into the mods in lib/COPIES.
-import { NAMES, AGENT_KEYS, FULL_PERM, PERM_DEFAULT, levelName, current, rowFor, menuFor } from "./agents.js";
+import { NAMES, AGENT_KEYS, FULL_PERM, PERM_DEFAULT, rolePerms, levelName, current, rowFor, menuFor } from "./agents.js";
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
@@ -83,10 +83,6 @@ export const USE_OTHER_CLI = "Use other CLI";
 export const LOADING_AGENTS = "Loading agents…";
 // An unset Reviewer's button: what runs, the other CLI.
 export const otherCliWords = (cli) => `Other CLI (${NAMES[cli] ?? cli})`;
-// The agents a role's menu offers: omp runs task agents and reviewers, not an Assistant (the chat can't read its log yet).
-export const TASK_ONLY = ["omp"];
-export const roleMenus = (role, menus) =>
-  role === "coordinator" && menus ? Object.fromEntries(Object.entries(menus).filter(([k]) => !TASK_ONLY.includes(k))) : menus;
 // (omp's other is Claude Code, as herdr-task's other_cli)
 export const otherCli = (worker) => (worker === "codex" || worker === "omp" ? "claude" : "codex");
 // Reactions (herdr-task's reactions.py): every agent (Assistants, task workers, automation runs, agent tabs) reacts to
@@ -166,13 +162,15 @@ export function choicesFrom(dflts, installed = { claude: true, codex: true }) {
   const model = rowFor(first, c) ?? menus[first]?.models?.[0]?.id ?? null;
   return { menus, permDefault, defaults: { agent: first, model, effort: c.effort ?? null, fast: false, perm: permDefault[first] } };
 }
-// What a role's model button starts from: its own choice, else for the Reviewer the other CLI, else the defaults.
+// What a role's model button starts from: its own choice, else for the Reviewer the other CLI, else the defaults (an
+// Assistant's with its own permission mode: agents.js rolePerms).
 export function roleSel(role, own, choices, worker) {
   if (own) return { sel: { ...own }, unset: false };
   const o = otherCli(worker);
   if (role === "reviewer" && choices?.menus?.[o])
     return { sel: { agent: o, model: choices.menus[o].models[0]?.id ?? null, effort: null, fast: false, perm: choices.permDefault?.[o] ?? null }, unset: true };
-  return { sel: choices?.defaults ? { ...choices.defaults } : null, unset: true };
+  const d = choices?.defaults;
+  return { sel: d ? { ...d, perm: rolePerms(role, choices.permDefault ?? {})[d.agent] ?? d.perm } : null, unset: true };
 }
 // A model picked in the menu: the effort and speed stay where it has them; another agent brings its own permission
 // modes (full access staying full access).

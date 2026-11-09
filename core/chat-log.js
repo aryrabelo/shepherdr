@@ -3,8 +3,13 @@
 // Finding an agent's own session log and reading it as a conversation.
 // Claude Code: ~/.claude/sessions/<pid>.json names the session its process writes, so the
 // log is ~/.claude/projects/*/<sessionId>.jsonl. Codex keeps its rollout file open, so the
-// file is whatever rollout-*.jsonl its process (or a child) holds. Both are exact: no
-// guessing by folder or time, so two agents in one folder never get mixed up.
+// file is whatever rollout-*.jsonl its process (or a child) holds. omp (Oh My Pi, run as `omp` or a
+// wrapper such as omp-safe) keeps its session file open while it runs
+// (~/.omp/agent/sessions/<folder>/<when>_<id>.jsonl), and its owner lock
+// (~/.omp/run/session-owners/<id>.lock): the file it holds, else the log named by the lock it holds;
+// one holding neither has no session yet ("pending": its first message makes it). Never its
+// PI_SESSION_FILE (only its tools' environment has it) nor the newest file in its folder. All three
+// are exact: no guessing by folder or time, so two agents in one folder never get mixed up.
 
 // Prints the log's path on the agent's machine, or nothing. Args: kind, pid.
 import { codexQuestions } from "./asks.js";
@@ -22,13 +27,27 @@ for p in "$pid" $(kids "$pid"); do
     echo "pending"; exit 0
   else
     if [ -d "/proc/$p/fd" ]; then
-      f=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | head -1)
+      fs=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null)
     else
-      f=$(lsof -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*\\.jsonl$' | head -1)
+      fs=$(lsof -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p')
     fi
-    [ -n "$f" ] && { echo "$f"; exit 0; }
+    if [ "$kind" = omp ]; then
+      # its own session file (a subagent's is one folder deeper), else the one its lock names
+      f=$(printf '%s\\n' "$fs" | grep -E '/agent/sessions/[^/]+/[^/]*_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jsonl$' | head -1)
+      [ -n "$f" ] && { echo "$f"; exit 0; }
+      # every lock it holds, in turn: a subagent's (its log one folder deeper, never matched here) may come first
+      f=$(printf '%s\\n' "$fs" | grep -E '/run/session-owners/[0-9a-f-]{36}\\.lock$' | while IFS= read -r l; do
+        id=$(basename "$l" .lock)
+        for g in "\${l%/run/session-owners/*}"/agent/sessions/*/*_"$id".jsonl; do [ -f "$g" ] && { echo "$g"; exit 0; }; done
+      done)
+      [ -n "$f" ] && { echo "$f"; exit 0; }
+    else
+      f=$(printf '%s\\n' "$fs" | grep '/rollout-.*\\.jsonl$' | head -1)
+      [ -n "$f" ] && { echo "$f"; exit 0; }
+    fi
   fi
 done
+[ "$kind" = omp ] && echo "pending"
 true`;
 
 // Reads a log on the agent's machine, sending back only what the chat shows. Each kept line
@@ -36,7 +55,9 @@ true`;
 // ids only (outputs stay in the file, fetched when a row is opened; "TASK=<id>" when the call
 // left a job running in the background), T a call too big to send (its tool name), N a
 // background job that ended ("<call id> <task id> <status>"). Lines the chat doesn't show
-// (bookkeeping, thinking, requests) stay.
+// (bookkeeping, thinking, requests) stay. omp writes one line per message ({"type":"message",
+// "message":{"role":…}}: user, assistant with its text and calls, toolResult) and its model and
+// thinking level as lines of their own (model_change, thinking_level_change).
 //   log tail <file> <from>            what was added since byte <from>: "T <size> <from> <end>"
 //   log page <file> <before> <want>   about <want> messages ending at byte <before> (or the
 //                                     last whole line), going back in growing chunks:
@@ -55,6 +76,8 @@ BEGIN { pos = base; first = base; msgs = 0 }
   head = substr(line, 1, 400)
   claude = index(head, "\"isSidechain\":false") && index(line, "\"type\":\"user\",\"message\"")
   codex = index(head, "\"type\":\"response_item\"")
+  omp = substr(line, 1, 17) == "{\"type\":\"message\""
+  ompr = omp && index(head, "\"message\":{\"role\":\"toolResult\"")
   # A background job (a shell, a watcher, a helper) that ended: Claude Code notes it the moment it
   # ends, as a message queued for the agent (which may read it much later).
   if (index(head, "\"type\":\"queue-operation\",\"operation\":\"enqueue\"") && index(line, "<task-notification>") && index(line, "<status>")) {
@@ -68,17 +91,22 @@ BEGIN { pos = base; first = base; msgs = 0 }
     if (length(line) <= 262144) print off "\tJ\t" line
     next
   }
-  if ((claude && index(line, "\"tool_result\"")) || (codex && (index(head, "\"function_call_output\"") || index(head, "\"custom_tool_call_output\"")))) {
+  if ((claude && index(line, "\"tool_result\"")) || (codex && (index(head, "\"function_call_output\"") || index(head, "\"custom_tool_call_output\""))) || ompr) {
     if (count) next
     ids = ""; t = line
-    while (match(t, /"(tool_use_id|call_id)":"[^"]*"/)) { m = substr(t, RSTART, RLENGTH); sub(/^"[a-z_]*":"/, "", m); sub(/"$/, "", m); ids = ids " " m; t = substr(t, RSTART + RLENGTH) }
-    # A helper (or job) launched to run on its own: its result came at once, it is not done yet.
-    if (index(line, "Async agent launched") || index(line, "running in background")) ids = ids " ASYNC"
-    # A shell or watcher left running in the background (or moved there mid-run): its task id.
-    if (match(line, /"(backgroundTaskId|taskId)":"[^"]+"/)) { m = substr(line, RSTART, RLENGTH); sub(/^"[A-Za-z]*":"/, "", m); sub(/"$/, "", m); ids = ids " TASK=" m }
+    if (ompr) { if (match(head, /"toolCallId":"[^"]*"/)) ids = " " substr(head, RSTART + 14, RLENGTH - 15) }
+    else {
+      while (match(t, /"(tool_use_id|call_id)":"[^"]*"/)) { m = substr(t, RSTART, RLENGTH); sub(/^"[a-z_]*":"/, "", m); sub(/"$/, "", m); ids = ids " " m; t = substr(t, RSTART + RLENGTH) }
+      # A helper (or job) launched to run on its own: its result came at once, it is not done yet.
+      if (index(line, "Async agent launched") || index(line, "running in background")) ids = ids " ASYNC"
+      # A shell or watcher left running in the background (or moved there mid-run): its task id.
+      if (match(line, /"(backgroundTaskId|taskId)":"[^"]+"/)) { m = substr(line, RSTART, RLENGTH); sub(/^"[A-Za-z]*":"/, "", m); sub(/"$/, "", m); ids = ids " TASK=" m }
+    }
     print off "\tR\t" ids
     # An answer to a question, or words that declined a request: read whole (answers()).
     if (claude && length(line) <= 262144 && ((index(line, "\"answers\":{") && index(line, "\"questions\":[")) || index(line, "wrote in the chat instead: "))) print off "\tJ\t" line
+    # omp: the answer to its ask tool, in its details (ompAnswer()).
+    if (ompr && index(head, "\"toolName\":\"ask\"") && length(line) <= 262144) print off "\tJ\t" line
     next
   }
   # The queue of messages typed while Claude Code works: what goes in (the words of the person)
@@ -90,7 +118,11 @@ BEGIN { pos = base; first = base; msgs = 0 }
     next
   }
   keep = 0
-  if (index(head, "\"isSidechain\":false")) {
+  if (omp) {
+    if (index(head, "\"message\":{\"role\":\"user\"") || index(head, "\"message\":{\"role\":\"assistant\"")) keep = 1
+  } else if (substr(line, 1, 22) == "{\"type\":\"model_change\"" || substr(line, 1, 31) == "{\"type\":\"thinking_level_change\"") {
+    keep = 1
+  } else if (index(head, "\"isSidechain\":false")) {
     if (index(line, "\"type\":\"user\",\"message\"") || index(line, "\"type\":\"assistant\",\"uuid\"") || (index(line, "\"type\":\"attachment\",\"uuid\"") && index(line, "\"queued_command\""))) keep = 1
   } else if (index(head, "\"type\":\"response_item\"")) {
     if (index(head, "\"type\":\"message\"") || index(head, "_call\"")) keep = 1
@@ -100,11 +132,13 @@ BEGIN { pos = base; first = base; msgs = 0 }
     keep = 1
   }
   if (!keep) next
-  if (index(line, "\"type\":\"text\"") || index(line, "\"role\":\"user\",\"content\":\"") || index(head, "\"type\":\"message\"")) msgs++
+  if (index(line, "\"type\":\"text\"") || (!omp && (index(line, "\"role\":\"user\",\"content\":\"") || index(head, "\"type\":\"message\"")))) msgs++
   if (count) next
   gsub(/"data":"[^"]*"/, "\"data\":\"\"", line)
   gsub(/"image_url":"data:[^"]*"/, "\"image_url\":\"\"", line)
-  big = (index(line, "\"tool_use\"") || index(head, "_call\"")) ? 32768 : 262144
+  # omp: a thinking block loses its signature (never read here); its text and calls come whole, in one line
+  if (omp) gsub(/"thinkingSignature":"[^"]*"/, "\"thinkingSignature\":\"\"", line)
+  big = omp ? 262144 : (index(line, "\"tool_use\"") || index(head, "_call\"")) ? 32768 : 262144
   if (length(line) > big) {
     nm = ""
     if (match(line, /"name":"[^"]*"/)) nm = substr(line, RSTART + 8, RLENGTH - 9)
@@ -563,6 +597,86 @@ function codexStep(name, args) {
   return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
 }
 
+// The files an omp edit names: its input's "[path#TAG]" headers (hashline patches), else its path.
+function ompFiles(a) {
+  const files = [...String(a.input ?? "").matchAll(/^\[([^\]\n#]+)#[0-9A-Za-z]{2,8}\]/gm)].map((m) => m[1]);
+  return files.length ? [...new Set(files)] : a.path ? [String(a.path)] : [];
+}
+
+// One omp call in words (its tools: bash, read, edit, write, grep, find, glob, task, ...). Each call says what it
+// does in a few words (`intent`, or its `i` argument): the working line shows that, as Claude Code's descriptions.
+export function ompStep(name, a = {}, intent = "") {
+  a = a && typeof a === "object" ? a : {};
+  const why = clip(intent || a.i || "", 60);
+  switch (name) {
+    case "bash": {
+      const cmd = String(a.command ?? "");
+      const wait = waitWords(cmd, why || null);
+      return { kind: "run", line: why ? `${why}: ${clip(cmd, 80)}` : `Ran ${clip(cmd, 80)}`, doing: wait ?? (why || `Running ${cmdWords(cmd)}`), waiting: Boolean(wait) };
+    }
+    case "eval": return { kind: "run", line: why ? `${why}: ran code` : "Ran code", doing: why || "Running code" };
+    case "read": {
+      const p = String(a.path ?? "");
+      if (/^https?:\/\//.test(p)) return { kind: "web", line: `Opened ${clip(p, 80)}`, doing: `Reading ${host(p)}` };
+      return { kind: "read", line: `Read ${short(p)}`, doing: why || `Reading ${base(p)}` };
+    }
+    case "edit": case "ast_edit": {
+      const files = ompFiles(a);
+      return { kind: "edit", line: files.length ? `Edited ${files.map(short).join(", ")}` : "Edited files", doing: why || (files.length ? `Editing ${files.map(base).slice(0, 3).join(", ")}` : "Editing files"), count: Math.max(1, files.length) };
+    }
+    case "write": return { kind: "edit", line: `Wrote ${short(a.path)}`, doing: why || `Writing ${base(a.path)}` };
+    case "grep": case "ast_grep": return { kind: "search", line: `Searched for “${clip(a.pattern, 50)}”`, doing: why || `Searching for “${clip(a.pattern, 40)}”` };
+    case "find": return { kind: "search", line: `Looked for ${clip(a.query, 60)}`, doing: why || `Looking for ${clip(a.query, 40)}` };
+    case "glob": return { kind: "search", line: `Looked for ${clip(a.path ?? a.pattern, 60)}`, doing: why || `Looking for ${clip(a.path ?? a.pattern, 40)}` };
+    case "web_search": return { kind: "web", line: `Searched the web for “${clip(a.query, 60)}”`, doing: why || `Searching the web for “${clip(a.query, 40)}”` };
+    // Its helpers (subagents) run inside the call: it waits for them.
+    case "task": {
+      const n = Array.isArray(a.tasks) ? a.tasks.length : 1;
+      return { kind: "agent", line: why ? `Asked ${n === 1 ? "a helper" : `${n} helpers`}: ${why}` : `Asked ${n === 1 ? "a helper" : `${n} helpers`}`, doing: why || "Waiting for helpers", waiting: true, count: n };
+    }
+    case "wait": return { kind: "tool", line: why ? `Waited: ${why}` : "Waited for its background work", doing: why || "Waiting", waiting: true };
+    case "todo": return { kind: "plan", line: "Updated its plan", doing: why || "Planning" };
+  }
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name);
+  if (mcp) return { kind: "tool", line: `Used ${mcp[1]}: ${mcp[2]}`, doing: why || `${mcp[2].replace(/[_-]+/g, " ")} (${mcp[1]})` };
+  return { kind: "tool", line: `Used ${name}`, doing: why || `Using ${name}` };
+}
+
+// omp's ask tool in words, as Codex's questions show: each question, then its options ("- label"). Two shapes: up to
+// omp 18.18.2 `questions: [{ question, options: [{ label }] }]`; from 18.18.3 one HTML form (`html`: a <fieldset> per
+// question, its <legend> the question, a <label> or <option> per choice). -> { text, options } (options: every
+// choice's words, to tell an option picked from words typed: ompAnswer()).
+const htmlText = (s) => unattr(String(s).replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&#39;/g, "'")).replace(/\s+/g, " ").trim();
+function ompAsk(a) {
+  if (typeof a?.html === "string") {
+    const blocks = [], options = [];
+    for (const m of a.html.matchAll(/<(legend|label|option)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)) {
+      const t = htmlText(m[2]);
+      if (!t) continue;
+      if (m[1].toLowerCase() === "legend" || !blocks.length) blocks.push(m[1].toLowerCase() === "legend" ? [t] : [`- ${t}`]);
+      else blocks[blocks.length - 1].push(`- ${t}`);
+      if (m[1].toLowerCase() !== "legend") options.push(t);
+    }
+    // a choice's value counts as picked too (an answer may name it so)
+    for (const m of a.html.matchAll(/<(?:input|option)\b[^>]*\bvalue="([^"]*)"/gi)) options.push(unattr(m[1]));
+    return { text: blocks.map((b) => b.join("\n")).join("\n\n"), options };
+  }
+  const qs = Array.isArray(a?.questions) ? a.questions : a?.question ? [a] : [];
+  const label = (o) => String(o?.label ?? o);
+  return { text: qs.map((q) => [q?.question, ...(Array.isArray(q?.options) ? q.options.map((o) => `- ${label(o)}`) : [])].filter(Boolean).join("\n")).join("\n\n"),
+    options: qs.flatMap((q) => (Array.isArray(q?.options) ? q.options.map(label) : [])) };
+}
+
+// The question omp is asking now, while its turn waits on it (an omp chat's last ask not answered yet), else null.
+// omp's ask has no card here: words sent to its terminal meanwhile would land in its list of options, so the chat holds
+// them (ASK_HELD) until it is answered there.
+export function openAsk(conv) {
+  if (conv?.kind !== "omp") return null;
+  const q = [...conv.items].reverse().find((x) => x.kind === "ask");
+  return q && !q.closed ? q : null;
+}
+export const ASK_HELD = "Not sent: omp is asking in its terminal. Answer it there, then send this again.";
+
 // The conversation in one log, built from LOG's records ({ off, kind, data }) in file order.
 // Items (ids come from byte offsets, so they stay the same when earlier pages are added):
 //   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at }
@@ -839,12 +953,12 @@ export class Conversation {
         // A call too big to send whole: its name and small fields ("file_path=…").
         const [name, ...fields] = r.data.split("\x1f");
         const input = Object.fromEntries(fields.map((f) => { const i = f.indexOf("="); let v = f.slice(i + 1); try { v = JSON.parse(`"${v.replace(/\\$/, "")}"`); } catch {} return [f.slice(0, i), v]; }));
-        if (name) this.step(`big${r.off}`, r.off, claudeStep(name, input) ?? { kind: "tool", line: `Used ${name}`, doing: "Working" });
+        if (name) this.step(`big${r.off}`, r.off, (this.kind === "omp" ? ompStep(name, input) : claudeStep(name, input)) ?? { kind: "tool", line: `Used ${name}`, doing: "Working" });
         continue;
       }
       const l = parse(r.data);
       if (!l || typeof l !== "object") continue;
-      if (this.kind === "codex") this.codex(l, r.off); else this.claude(l, r.off);
+      if (this.kind === "codex") this.codex(l, r.off); else if (this.kind === "omp") this.omp(l, r.off); else this.claude(l, r.off);
     }
   }
 
@@ -985,6 +1099,99 @@ export class Conversation {
       this.doing = null;
     }
   }
+
+  // An omp log's line (LOG keeps its messages, model_change and thinking_level_change). A turn ends with an assistant
+  // message that stops ("stop"), stops on an error, or is interrupted ("aborted"); "toolUse" goes on.
+  omp(l, off) {
+    const at = time(l.timestamp);
+    if (l.type === "model_change") { if (l.model) this.meta = { ...this.meta, model: String(l.model), at }; return; }
+    if (l.type === "thinking_level_change") { if (l.thinkingLevel) this.meta = { ...this.meta, effort: String(l.thinkingLevel) }; return; }
+    if (l.type !== "message") return;
+    const m = l.message ?? {};
+    if (m.role === "toolResult") { this.ompAnswer(m, off, at); return; }
+    if (m.role === "user") {
+      const c = m.content;
+      const blocks = typeof c === "string" ? [{ type: "text", text: c }] : Array.isArray(c) ? c : [];
+      const images = blocks.filter((b) => b?.type === "image").length;
+      const parts = blocks.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => cleanUser(b.text)).filter(Boolean);
+      if (!parts.length) { if (images) this.user(`u${off}`, { text: "", images, at }); return; }
+      const pilot = parts.find((p) => p.pilot)?.pilot;
+      this.user(`u${off}`, { text: parts.map((p) => p.text).filter(Boolean).join("\n\n"), from: parts[0].from, ...(parts[0].assistant ? { assistant: parts[0].assistant } : {}),
+        images, reactions: parts.flatMap((p) => p.reactions ?? []), news: parts.flatMap((p) => p.news ?? []), ...(pilot ? { pilot } : {}),
+        replyTo: parts[0].replyTo, quoted: parts[0].quoted, rest: parts[0].rest, at });
+      return;
+    }
+    if (m.role !== "assistant") return;
+    if (m.model) {
+      const u = m.usage ?? {};
+      const used = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + (u.output ?? 0);
+      this.meta = { ...this.meta, model: m.provider ? `${m.provider}/${m.model}` : String(m.model), used: used || this.meta.used, at };
+    }
+    // ids from the line's offset and the block's place in it: one line can hold several texts and rows of calls
+    let item = null;
+    for (const [i, b] of (Array.isArray(m.content) ? m.content : []).entries()) {
+      if (b?.type === "thinking") { if (!this.open.size) this.doing = "Thinking"; continue; }
+      if (b?.type === "text") {
+        const said = this.agentText(b.text ?? "");
+        if (!said) continue;
+        // one message's text blocks are one message, unless a call came between them
+        if (item && this.items[this.items.length - 1] === item) item.text += "\n\n" + said;
+        else item = this.push({ kind: "agent", id: `a${off}.${i}`, text: said, at });
+        continue;
+      }
+      if (b?.type !== "toolCall") continue;
+      const id = String(b.id ?? `c${off}.${i}`), name = String(b.name ?? ""), a = b.arguments && typeof b.arguments === "object" ? b.arguments : {};
+      if (name === "ask") {
+        const { text, options } = ompAsk(a);
+        if (text) this.asked(id, { kind: "ask", id: `q${off}.${i}`, text });
+        (this.askOptions ??= new Map()).set(id, options);
+        if (this.askOptions.size > 20) this.askOptions.delete(this.askOptions.keys().next().value);
+        this.open.set(id, "Asking you something");
+        this.doing = "Asking you something";
+        continue;
+      }
+      const st = ompStep(name, a, b.intent);
+      st.at = at || Date.now();
+      this.step(id, `${off}.${i}`, st);
+      if (name === "bash") {
+        if (ARTIFACT.test(String(a.command ?? ""))) this.push({ kind: "artifact", id: `art${off}.${i}`, at });
+        this.sent(String(a.command ?? ""), `${off}.${i}`, at);
+      }
+    }
+    if (m.stopReason === "error" && m.errorMessage) this.push({ kind: "error", id: `e${off}`, text: String(m.errorMessage) });
+    // a turn ends: it stopped, failed, was interrupted, or ran out of tokens ("length"); a question it left is gone
+    if (["stop", "error", "aborted", "length"].includes(m.stopReason)) {
+      for (const id of this.open.keys()) { const q = this.questions.get(id); if (q) q.closed ??= "dismissed"; }
+      this.open.clear();
+      this.waits.clear();
+      this.waiting = false;
+      this.doing = null;
+    }
+  }
+
+  // The answer to omp's ask tool (its toolResult line, whole): the words the person wrote show as their message
+  // (an option picked on its screen is not a message), as Claude Code's answers(). Up to omp 18.18.2 its details are
+  // { selectedOptions, customInput } (or { results: [those] }); from 18.18.3 { answers: [{ name, question, answer }] },
+  // `answer` the picked options' words (several joined by ", ") or the words typed.
+  ompAnswer(m, off, at) {
+    const id = String(m.toolCallId ?? "");
+    const q = this.questions.get(id);
+    const d = m.details && typeof m.details === "object" ? m.details : {};
+    let said, picked;
+    if (Array.isArray(d.answers)) {
+      // longest first, so an option holding another's words ("OAuth (Google, GitHub)") goes whole
+      const opts = [...(this.askOptions?.get(id) ?? [])].filter(Boolean).sort((x, y) => y.length - x.length);
+      const words = d.answers.map((r) => String(r?.answer ?? "").trim()).filter(Boolean);
+      picked = words.length > 0;
+      said = words.filter((w) => opts.reduce((rest, o) => rest.split(o).join(" "), w).replace(/[\s,]+/g, "") !== "");
+    } else {
+      const rs = Array.isArray(d.results) ? d.results : [d];
+      said = rs.map((r) => String(r?.customInput ?? "").trim()).filter(Boolean);
+      picked = rs.some((r) => (Array.isArray(r?.selectedOptions) && r.selectedOptions.length) || r?.customInput);
+    }
+    if (q) q.closed = picked ? "answered" : "dismissed";
+    if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
+  }
 }
 
 // Turns LOG's output into its header line and records.
@@ -1014,6 +1221,8 @@ export function resultText(line, id) {
       const v = b?.content;
       text = typeof v === "string" ? v : Array.isArray(v) ? v.map((x) => x?.text ?? "").join("\n") : null;
     }
+    // omp's tool result: { role: "toolResult", content: [{ type: "text", text }] }
+    if (text === null && l.message?.role === "toolResult" && Array.isArray(c)) text = c.filter((x) => x?.type === "text").map((x) => x.text ?? "").join("\n");
     const o = l.payload?.output;
     if (text === null && o !== undefined) text = typeof o === "string" ? o : String(o?.output ?? o?.content ?? JSON.stringify(o));
   } else {

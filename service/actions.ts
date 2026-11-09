@@ -7,11 +7,13 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sendBody, steerNow, messageBody, refusal, reactionLine, mentionedIn, taskTag } from "../core/send.js";
 import { kindOf } from "../core/chat-reader.js";
-import { WORDS } from "../core/chat-view.js";
+import { openAsk, ASK_HELD } from "../core/chat-log.js";
+import { WORDS, rewinds } from "../core/chat-view.js";
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
 const { sessionOf, forkArgv } = AGa as any;
 import * as SP from "../core/spaces.js";
+import * as F from "../core/folders.js";
 const { READ, withMove, withSection, withoutSection, withSectionName, withIcon, withMachineLook, DELETED, deletedSection, withRestoredSection } = SP as any;
 import type { Compat } from "./compat.ts";
 import { worktreeAct } from "./worktrees.ts";
@@ -45,6 +47,8 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
   if (!text && !(Array.isArray(b.attachments) && b.attachments.length)) throw new Error("nothing to send");
   const t = hub.terminals.get(a);
   if (!t || t.state !== "live") throw new Error("That agent isn't running.");
+  // omp asks in its terminal (no card): words typed there would land in its list of options (core/chat-log.js openAsk)
+  if (openAsk(compat.reader?.(a)?.conv)) throw new Error(ASK_HELD);
   const io = { hc: asPerson(hub), sleep: (ms: number) => Bun.sleep(ms), status: () => (hub.terminals.get(a) as any)?.status?.state ?? null };
   // files sent with it: their paths after the words, as the window's chat sends them (copied first to another machine)
   const sent: string[] = Array.isArray(b.attachments) ? b.attachments : [];
@@ -292,32 +296,50 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   const bar = () => sh!.value("spaces-chat") ?? {};
   const sec = (id: unknown) => (typeof id === "string" && id.startsWith("s:") ? id.slice(2) : null);
   if (b?.type === "move" && typeof b.id === "string" && typeof b.to === "string" && sh) {
+    // ASH-15: into a folder (this computer's spaces only; Pinned and a section come first, so a folder move leaves
+    // both), or back to its machine's own top, which takes it out of the folder it showed in (only then: one leaving
+    // Pinned or a section keeps the folder its rules give it). A folder's spaces keep Herdr's order: no `before`.
+    if (b.to.startsWith("f:") || b.to.startsWith("m:")) {
+      const fs = compat.folders, folder = fs?.idOf(b.to) ?? null;
+      if (b.to.startsWith("f:") && !folder) throw new Error("That folder is gone.");
+      const sp = compat.spaceOf(b.id);
+      if (folder && (!sp || sp.machine)) throw new Error("Only this computer's spaces go in a folder.");
+      const wasIn = fs?.shown.get(b.id) ?? null;
+      await sh.set("spaces-chat", withMove(bar(), b.id, null, null));
+      if (fs && sp && !sp.machine && (folder || wasIn)) {
+        const at = fs.places.get(b.id) ?? sp.folder;
+        fs.change((d) => F.withSpaceIn(d, b.id, folder, at) as typeof d);
+      }
+      return { ok: true };
+    }
     const to = b.to === "pinned" ? "pinned" : sec(b.to);
     await sh.set("spaces-chat", withMove(bar(), b.id, to, typeof b.before === "string" ? b.before : null));
     return { ok: true };
   }
   if (b?.type === "order" && sh && typeof b.under === "string" && Array.isArray(b.ids)) {
     // a dragged sidebar list, kept where the window keeps it: Pinned's and each section's spaces, and the sections'
-    // order, in the shared sidebar data; a machine's own spaces in the window's order (space.move)
+    // order, in the shared sidebar data; a machine's own spaces in the window's order (space.move). ASH-15: a
+    // folder's spaces keep Herdr's order too (no order of their own in the file), as a machine's own do.
+    const under = b.under.startsWith("f:") ? `m:${compat.host}` : b.under;
     const ids = b.ids.filter((x: unknown) => typeof x === "string").slice(0, 500) as string[];
     const d = structuredClone(bar());
     d.sections ??= []; d.pinned ??= [];
     const same = (a: string[], c: string[]) => a.length === c.length && a.every((x) => c.includes(x));
-    if (b.under === "pinned") { if (!same(ids, d.pinned)) throw new Error("Pinned changed meanwhile."); d.pinned = ids; }
-    else if (sec(b.under)) {
-      const x = d.sections.find((y: any) => y.id === sec(b.under));
+    if (under === "pinned") { if (!same(ids, d.pinned)) throw new Error("Pinned changed meanwhile."); d.pinned = ids; }
+    else if (sec(under)) {
+      const x = d.sections.find((y: any) => y.id === sec(under));
       if (!x || !same(ids, x.spaces ?? [])) throw new Error("That section changed meanwhile.");
       x.spaces = ids;
-    } else if (b.under === "sections" || b.under.startsWith("sections:")) {
+    } else if (under === "sections" || under.startsWith("sections:")) {
       // the sections at the top (Pinned among them, which isn't one of the data's) or a machine's: their new order
       const order = ids.map(sec).filter(Boolean) as string[];
       d.sections = [...order.map((id) => d.sections.find((y: any) => y.id === id)).filter(Boolean), ...d.sections.filter((y: any) => !order.includes(y.id))];
-    } else if (b.under.startsWith("m:")) {
+    } else if (under.startsWith("m:")) {
       for (const [i, id] of ids.entries()) {
         const r = await run(["herdr-app", "do", "space.move", "--id", id, "--index", String(i + 1)]);
         if (r.code !== 0) {
           // no window: the machine's saved spaces in that order (service/saved-spaces.ts)
-          const key = b.under.slice(2);
+          const key = under.slice(2);
           await orderSaved(hub, key === compat.host ? null : key, ids);
           break;
         }
@@ -325,6 +347,14 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
       return { ok: true };
     } else throw new Error("Machines keep their order: drag spaces and sections instead.");
     await sh.set("spaces-chat", d);
+    return { ok: true };
+  }
+  // ASH-15: a folder folded or opened, written to its file (the space-folders mod's: both layouts fold the same). The
+  // state it was tapped to, never a toggle done again on a newer copy.
+  if (b?.type === "folder" && b.op === "fold" && compat.folders && typeof b.folded === "boolean") {
+    const id = compat.folders.idOf(b.id);
+    if (!id) throw new Error("That folder is gone.");
+    compat.folders.change((d) => F.withFolderFolded(d, id, b.folded) as typeof d);
     return { ok: true };
   }
   if (b?.type === "section" && sh) {
@@ -546,7 +576,9 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (t?.status?.state === "working") throw new Error("The agent is working: stop it first, then rewind.");
     const users = (r?.conv?.items ?? []).filter((x: any) => x.kind === "user" && !x.from && !/^\//.test(x.text ?? ""));
     const i = users.findIndex((u: any) => u.id === b.message), back = i < 0 ? 1 : users.length - i;
-    if ((kindOf(t) ?? "claude") === "claude") { await hub.send(a, "/rewind"); await Bun.sleep(700); await hc(["keys", a, ...Array(back).fill("up")]); }
+    const kind = kindOf(t) ?? "claude";
+    if (!rewinds(kind)) throw new Error("Rewind it in its terminal: omp's /branch picks the message.");
+    if (kind === "claude") { await hub.send(a, "/rewind"); await Bun.sleep(700); await hc(["keys", a, ...Array(back).fill("up")]); }
     else { await hc(["keys", a, "esc", "esc"]); await Bun.sleep(500); if (back > 1) await hc(["keys", a, ...Array(back - 1).fill("left")]); }
     return { ok: true, terminal: true };
   }
@@ -559,6 +591,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // a copy of the conversation in a new tab of its space, through the CLI's own fork (the window makes the tab)
     const a = chat(b.chat), t: any = hub.terminals.get(a), r = compat.reader?.(a);
     const kind = kindOf(t) ?? "claude", session = sessionOf(kind, r?.path ?? null);
+    if (!rewinds(kind)) throw new Error("Fork it in its terminal: omp's /fork.");
     if (!session) throw new Error("This conversation has no saved session to fork.");
     const space = ["herdr.space", "herdr.task.space", "herdr.coordinator.space"].map((k) => t?.labels?.[k]).find(Boolean);
     const res = await run(["herdr-app", "do", "tab.new", ...(space ? ["--space", space] : []), "--folder", t?.foreground?.cwd ?? t?.cwd ?? "", "--argv", JSON.stringify(forkArgv(kind, t?.foreground?.argv ?? t?.argv ?? [], session))]);

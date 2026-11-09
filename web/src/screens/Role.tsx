@@ -10,7 +10,7 @@ import { CheckIcon, DownIcon, ic, Menu, MenuItem, MenuLabel, MenuSeparator, Menu
 import * as AG from '@core/agents.js'
 import * as ST from '@core/settings.js'
 
-const { levelName, NAMES } = AG as unknown as { levelName: (e: string | null) => string | null; NAMES: Record<string, string> }
+const { levelName, NAMES, rolePerms } = AG as unknown as { levelName: (e: string | null) => string | null; NAMES: Record<string, string>; rolePerms: (role: string, p: Record<string, string>) => Record<string, string> }
 const { MODEL_MENU, chooseModel, modelLabel } = ST as unknown as {
   MODEL_MENU: { reasoning: string; fast: string; permissions: string }
   chooseModel: (menus: ModelMenus['menus'], permDefault: ModelMenus['permDefault'], sel: AgentPick, agent: string, id: string) => AgentPick
@@ -79,8 +79,8 @@ function ModelMenu({ role, start, up, onClose, save }: { role: string; start: Ag
   const [error, setError] = useState('')
   const [picks, setPicks] = useState<{ pinned: string[]; recent: string[] } | undefined>()
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  // omp only for task agents and reviewers (core/settings.js roleMenus)
-  useEffect(() => { void menusNow().then((m) => (m ? (setData({ ...m, menus: ST.roleMenus(role, m.menus) }), setPicks(m.picks)) : setError('Could not read the agents.'))) }, [role])
+  // every CLI for every role; another CLI picked on the Assistant's brings the Assistant's mode (core/agents.js rolePerms)
+  useEffect(() => { void menusNow().then((m) => (m ? (setData({ ...m, permDefault: rolePerms(role, m.permDefault) }), setPicks(m.picks)) : setError('Could not read the agents.'))) }, [role])
   const change = (next: AgentPick) => {
     setSel(next)
     setError('')

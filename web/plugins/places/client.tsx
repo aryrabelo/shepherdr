@@ -23,8 +23,8 @@ import { toast } from '@plugins/alerts/toasts.tsx'
 import { MarkRead, markPlaceRead, muted, placeUnread } from '@client/unread.ts'
 import { RestartItem } from '@client/restart.tsx'
 import { NOTIFY, NOTIFY_KEY, notifyOf, notifyRow, taskWho } from '@shared/alerts.ts'
-import { kept, PINNED, sectionsIn, TOP, type PlaceOrder } from '@shared/order.ts'
-import { machineName, NAME_MAX, nameProblem, slugify, type Machine, type Place, type Section, type Snapshot } from '@shared/types.ts'
+import { kept, moveIn, PINNED, sectionsIn, TOP, type PlaceOrder } from '@shared/order.ts'
+import { machineName, NAME_MAX, nameProblem, slugify, type Folder, type Machine, type Place, type Section, type Snapshot } from '@shared/types.ts'
 import { AddSpace, asTyped, openAddSpace } from './add.tsx'
 import { dragging, press } from './drag.ts'
 import { openNewSection, openRename, SectionDialogs } from './section.tsx'
@@ -139,16 +139,10 @@ function reorder(under: string, ids: string[]) {
 
 /** a space into a section (PINNED too) or back under its machine (to: its id), before another there or last */
 function moveTo(id: string, to: string, before?: string) {
-  const lists = { ...listsOf(getState().snap!), ...pending }
-  const from = Object.keys(lists).find((k) => groupKey(k) && lists[k].includes(id))
-  if (from === to && !before) return
-  const next: PlaceOrder = {}
-  if (from) next[from] = lists[from].filter((x) => x !== id)
-  const there = (next[to] ?? lists[to] ?? []).filter((x) => x !== id)
-  const i = before ? there.indexOf(before) : -1
-  next[to] = i < 0 ? [...there, id] : [...there.slice(0, i), id, ...there.slice(i)]
-  if (to.startsWith('m:') && !before) loose.add(next[to])
-  hold(next, act({ type: 'move', id, to, ...(before ? { before } : {}) }))
+  const m = moveIn({ ...listsOf(getState().snap!), ...pending }, id, to, before, groupKey)
+  if (!m) return
+  if (m.loose) loose.add(m.next[to])
+  hold(m.next, act({ type: 'move', id, to, ...(m.before ? { before: m.before } : {}) }))
 }
 
 /** where a row can be moved, and Alt+Shift+↑/↓ moving it one step */
@@ -172,15 +166,17 @@ function moveKey(e: ReactKeyboardEvent, id: string, sort: Sort) {
 /* ---------- the tree: sections at the top, then the machines with their spaces and sections ---------- */
 
 /** a list that holds spaces: a section's (its id) or a machine's own (its id, m:<key>) */
-const groupKey = (k: string) => k === PINNED || k.startsWith('s:') || k.startsWith('m:')
+const groupKey = (k: string) => k === PINNED || k.startsWith('s:') || k.startsWith('m:') || k.startsWith('f:')
 
 /** every list of the sidebar as the snapshot has it, by what it is under (shared/order.ts): the machines, the sections
  *  at the top and in each machine, each section's spaces and each machine's own */
 function listsOf(snap: Snapshot): PlaceOrder {
   const sections = snap.sections ?? []
-  const inside = new Set(sections.flatMap((s) => s.spaces))
+  const folders = snap.folders ?? []
+  const inside = new Set([...sections.flatMap((s) => s.spaces), ...folders.flatMap((f) => f.spaces)])
   const out: PlaceOrder = { all: (snap.machines ?? []).map((m) => m.id), [TOP]: sections.filter((s) => !s.machine).map((s) => s.id) }
   for (const s of sections) out[s.id] = s.spaces
+  for (const f of folders) out[f.id] = f.spaces
   for (const m of snap.machines ?? []) {
     out[m.id] = snap.places.filter((p) => p.machine === m.machine && !inside.has(p.id)).map((p) => p.id)
     out[sectionsIn(m.id)] = sections.filter((s) => s.machine === m.machine).map((s) => s.id)
@@ -194,6 +190,32 @@ interface Group {
   shut: boolean
   /** its spaces as they show: none while it or its machine is folded */
   shown: Place[]
+  /** a space folder's color (ASH-15) */
+  color?: string
+}
+
+/* ---------- the person's space folders (ASH-15): folded in their file; a tap shows at once ---------- */
+
+let folderFold: Record<string, { shut: boolean; at: number }> = {}
+const folderListeners = new Set<() => void>()
+function setFolderFold(next: typeof folderFold) {
+  folderFold = next
+  for (const l of folderListeners) l()
+}
+function useFolderFold() {
+  return useSyncExternalStore((cb) => { folderListeners.add(cb); return () => { folderListeners.delete(cb) } }, () => folderFold)
+}
+/** folded as the file says, or as a tap just made it (until the snapshot agrees, at most 10 s) */
+function folderShut(f: Folder) {
+  const o = folderFold[f.id]
+  return o && o.shut !== f.folded && Date.now() - o.at < 10_000 ? o.shut : f.folded
+}
+function toggleFolder(f: Folder) {
+  setFolderFold({ ...folderFold, [f.id]: { shut: !folderShut(f), at: Date.now() } })
+  void act({ type: 'folder', op: 'fold', id: f.id, folded: folderFold[f.id].shut }).catch(() => {
+    const { [f.id]: _, ...rest } = folderFold
+    setFolderFold(rest)
+  })
 }
 
 /** a git branch (the window's branch.svg): a worktree space's icon where it sits under its repo */
@@ -264,8 +286,14 @@ function placeTree(snap: Snapshot, fold: string[], mine: PlaceOrder, opened: str
     const shut = offline(m) ? !opened.includes(m.id) : fold.includes(m.id)
     const fits = (p: Place) => p.machine === m.machine
     const spaces = nest(take(lists[m.id], fits), snap.look?.worktrees === false, getState().ui.place)
+    // ASH-15: its folders (the file's fold, a tap's shown at once), before its spaces in none
+    const folders: Group[] = (snap.folders ?? []).filter((f) => f.machine === m.machine).map((f) => {
+      const fs = nest(take(lists[f.id], fits), snap.look?.worktrees === false, getState().ui.place)
+      const fshut = folderShut(f)
+      return { s: { id: f.id, name: f.name, machine: f.machine, spaces: f.spaces }, color: f.color, spaces: fs, shut: fshut, shown: shut ? [] : fshut ? fs.filter(stays) : fs }
+    })
     const inside = (lists[sectionsIn(m.id)] ?? []).flatMap((s) => group(s, shut, fits))
-    return [{ m, spaces, shut, shown: shut ? [] : spaces, sections: inside, all: [...spaces, ...inside.flatMap((g) => g.spaces)] }]
+    return [{ m, spaces, shut, shown: shut ? [] : spaces, folders, sections: inside, all: [...folders.flatMap((g) => g.spaces), ...spaces, ...inside.flatMap((g) => g.spaces)] }]
   })
   return { top, tree }
 }
@@ -275,7 +303,7 @@ const allOpen = (snap: Snapshot) => (snap.machines ?? []).map((m) => m.id)
 
 /** the spaces of the sidebar as they show, top to bottom */
 function shownIds({ top, tree }: ReturnType<typeof placeTree>) {
-  return [...top.flatMap((g) => g.shown), ...tree.flatMap((t) => [...t.shown, ...t.sections.flatMap((g) => g.shown)])].map((p) => p.id)
+  return [...top.flatMap((g) => g.shown), ...tree.flatMap((t) => [...t.folders.flatMap((g) => g.shown), ...t.shown, ...t.sections.flatMap((g) => g.shown)])].map((p) => p.id)
 }
 
 /** the sections a space sits in: its section at the top, or its machine and its section there */
@@ -285,7 +313,7 @@ function branchesOf(snap: Snapshot, id: string) {
   if (g) return [g.s.id]
   const t = tree.find((x) => x.all.some((p) => p.id === id))
   if (!t) return []
-  return [t.m.id, ...t.sections.filter((x) => x.spaces.some((p) => p.id === id)).map((x) => x.s.id)]
+  return [t.m.id, ...[...t.folders, ...t.sections].filter((x) => x.spaces.some((p) => p.id === id)).map((x) => x.s.id)]
 }
 
 /** where a space sits: its section's id, or its machine's */
@@ -297,6 +325,7 @@ function groupOf(snap: Snapshot, mine: PlaceOrder, p: Place) {
 /** the sections a space may go into, by id: any at the top, its own machine's, its machine (back under it) */
 function mayGo(snap: Snapshot, p: Place, group: string) {
   if (group.startsWith('m:')) return group === `m:${p.machine}`
+  if (group.startsWith('f:')) return !!snap.folders?.some((f) => f.id === group && f.machine === p.machine)
   const s = snap.sections?.find((x) => x.id === group)
   return !!s && (!s.machine || s.machine === p.machine)
 }
@@ -868,6 +897,29 @@ function SectionHeading({ g, snap, at, className }: { g: Group; snap: Snapshot; 
   )
 }
 
+/** A space folder's heading (ASH-15), as the window's: its folder in its color and its name; a tap folds it in its file
+ *  (both layouts fold it), the space you're in and its unread ones staying; folded, its counts. A space dropped on it
+ *  goes in. No menu: a folder is edited in the space-folders layout or its file. */
+function FolderHeading({ g, snap }: { g: Group; snap: Snapshot }) {
+  const f = snap.folders?.find((x) => x.id === g.s.id)
+  return (
+    <Heading
+      id={g.s.id}
+      label={g.s.name}
+      folds={`${g.s.name}'s spaces`}
+      icon={<span className="contents" style={g.color ? { color: g.color } : undefined}><SectionIcon className={clsx(icon, !g.color && 'text-fg3')} /></span>}
+      shut={g.shut}
+      toggle={() => f && toggleFolder(f)}
+      data-section={g.s.id}
+      data-machine={`m:${g.s.machine}`}
+      data-drop={g.s.id}
+      className={clsx(dropHeading, 'pl-5 phone:pl-6')}
+    >
+      {g.shut ? <Inside snap={snap} spaces={g.spaces} /> : null}
+    </Heading>
+  )
+}
+
 /** an open section with no spaces in it: where they go, as the window's */
 function EmptySection({ inner }: { inner: boolean }) {
   return <li className={clsx('flex min-h-7 items-center text-[0.75rem] text-fg3 phone:min-h-9 phone:text-[0.8125rem]', inner ? indent.inner : indent.top)}>Drag spaces here</li>
@@ -980,6 +1032,7 @@ function Places() {
   const snap = useSnap()!
   const place = useUI((u) => u.place)
   const fold = useFolded()
+  useFolderFold()
   const mine = usePending()
   const opened = useOpenedOff()
   const { top, tree } = placeTree(snap, fold, mine, opened)
@@ -1015,9 +1068,20 @@ function Places() {
       ) : null}
       {/* the machines, each a section of its own, apart as those at the top are */}
       <List className={top.length ? 'pt-3 phone:pt-4' : undefined}>
-        {tree.map(({ m, shut, shown, sections }, i) => (
+        {tree.map(({ m, shut, shown, sections, folders }, i) => (
           <Fragment key={m.id}>
             <MachineHeading m={m} shut={shut} className={i ? 'mt-3 phone:mt-4' : undefined} />
+            {/* ASH-15: the person's space folders, before the spaces in none */}
+            {shut
+              ? null
+              : folders.map((g) => (
+                  <Fragment key={g.s.id}>
+                    <FolderHeading g={g} snap={snap} />
+                    {g.shown.map((p) => (
+                      <Space key={p.id} p={p} snap={snap} at="inner" sort={{ under: g.s.id, ids: g.shown.map((x) => x.id) }} />
+                    ))}
+                  </Fragment>
+                ))}
             {shown.map((p) => (
               <Space key={p.id} p={p} snap={snap} at="machine" sort={{ under: m.id, ids: shown.map((x) => x.id) }} />
             ))}

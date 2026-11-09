@@ -124,3 +124,11 @@ an add-on's line and Web's state; `service/settings.test.ts` checks the rows the
 | Link | `:32` the link, Copy | link as its line, Copy (CopyButton) | ✓ |
 | QR code | `:34` "Open it on your phone", the picture | the same SVG (`service/main.ts` webNow), its words | ✓ (was missing) |
 | "Reading…", "Shepherdr's service isn't running here." | before the first read, no service | never: the page comes from the service | ◇ the web is the service's own page |
+
+## Agents › Assistant: omp and its permission mode (ASH-16)
+
+| Element | Window | Web | State |
+|---|---|---|---|
+| omp in the Assistant's model menu | shepherdr-settings resetRoles (no role filter) | screens/Role.tsx (no role filter) | ✓ |
+| An unset Assistant shows Auto (Claude Code) / Full access (omp) | core/settings.js roleSel + core/agents.js rolePerms | service/settings.ts roleSel | ✓ |
+| Another CLI picked keeps the Assistant's mode for it | lib/settings.js choose with rolePerms data | Role.tsx chooseModel with rolePerms | ✓ |

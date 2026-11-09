@@ -10,6 +10,10 @@
 // A machine that isn't connected reads "Offline", dimmed and folded, with no + or meter.
 // At full width each space opens into its threads under its row (threads.js, ASH-14): its tasks at work or waiting,
 // its own agents in its tabs, then its Snoozed and Settled shelves.
+// This computer's spaces also go in the person's space folders (folders.js, core/folders.js, ASH-15): the folders of
+// ~/.config/herdr-space-folders.json, the same the space-folders mod shows, under the machine before its spaces in
+// none. Pinned and a section come first: a pinned space or one in a section shows there, not in its folder. A click
+// on a folder's header folds it and a space dragged onto it (or among its spaces) goes in, both written to the file.
 // Opened as an overlay (props.view), this mod is instead one of its menus (popups.js), the
 // rename and New section dialog (rename.js) or that dialog's icon picker (icon.js).
 
@@ -32,6 +36,8 @@ import { on as addonOn } from "./addons.js";
 import { spaceName, gitTail, tilde, sharedNames } from "./core/spaces.js";
 import { coordinatorTab } from "./coordinator.js";
 import { Threads } from "./threads.js";
+import { SpaceFolders } from "./folders.js";
+import { folderOf, foldersOf, folderColor } from "./core/folders.js";
 
 const POPUPS = { add: Menu, space: Menu, section: Menu, icon: IconPicker, rename: Rename, machine: MachinePopup };
 
@@ -65,6 +71,12 @@ function place(s, ps) {
   return ps.find((p) => tabs.has(p.tab) && p.cwd && own(p.cwd))?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
+// Where the space-folders mod places a space for its folders: its first terminal's live folder (a task worker's
+// checkout too, as the mod's), else where it was made.
+function folderPlace(s, ps) {
+  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
+}
 // drag()'s machine for Pinned's places: a space from any machine lands there.
 const ANY = "\u0000any";
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
@@ -109,6 +121,10 @@ export default class Spaces extends View {
     // Each space's threads under its row (threads.js, ASH-14): its tasks at work and its own agents, every machine's.
     this.threads = new Threads();
     this.threads.start(cx);
+    // The person's space folders (folders.js, ASH-15): this computer's spaces go in them.
+    this.folders = new SpaceFolders();
+    this.folders.start(cx);
+    this.folderRows = new Map(); // a space shown in a folder or none (this computer's): its folder id, null for none
     this.git = {}; // where() -> { name, branch, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -525,13 +541,14 @@ export default class Spaces extends View {
     openMenu("add", { machine: m }, r ? { x: Math.max(8, r.x + r.width - 210), y: r.y + r.height + 4 } : "pointer");
   }
 
-  // One machine's rows (`list`: its shown spaces, in Herdr's order): the spaces in no
-  // section, then each section's header and, unless folded, its spaces in its order.
+  // One machine's rows (`list`: its shown spaces, in Herdr's order): on this computer its space folders first (folders.js),
+  // then the spaces in no section or folder, then each section's header and, unless folded, its spaces in its order.
   sectioned(m, list, t) {
     const sections = sectionsOf(m);
     const byId = new Map(list.map((r) => [r.w.id, r]));
     const filed = new Set(sections.flatMap((s) => s.spaces));
-    const out = this.ordered(list.filter((r) => !filed.has(r.w.id))).flatMap((r) => this.withThreads(r, t));
+    const loose = this.ordered(list.filter((r) => !filed.has(r.w.id)));
+    const out = m === null ? this.foldered(loose, t) : loose.flatMap((r) => this.withThreads(r, t));
     for (const s of sections) {
       const members = s.spaces.map((id) => byId.get(id)).filter(Boolean);
       const open = !s.folded || (this.pressed !== null && this.peek === s.id);
@@ -543,6 +560,49 @@ export default class Spaces extends View {
       if (open && !members.length) out.push(this.emptySection(s, t));
     }
     return out;
+  }
+
+  // This computer's spaces in no section: each folder's header and, unless folded, its spaces, then those in none. No
+  // folders (no file): the rows as they are. Which folder is the mod's: from where each space works now (folderPlace),
+  // a worktree space with its repo's own space, worked out over every space here (pinned and sectioned ones too), so a
+  // worktree follows its repo wherever the repo shows.
+  foldered(rows, t) {
+    const d = this.folders?.data;
+    if (!d) { this.folderRows = new Map(); return rows.flatMap((r) => this.withThreads(r, t)); }
+    const ps = panes(), every = this.visible().filter((r) => !r.w.machine);
+    const mains = new Map();
+    for (const r of every) if (r.g && !r.g.linked && !mains.has(r.g.repo)) mains.set(r.g.repo, r.w.id);
+    const placed = foldersOf(d, every.map((r) => ({ id: r.w.id, path: folderPlace(r.w, ps), under: r.g?.linked ? mains.get(r.g.repo) ?? null : null })));
+    this.folderRows = new Map(rows.map((r) => [r.w.id, placed.get(r.w.id) ?? null]));
+    const out = [];
+    for (const f of d.list) {
+      const members = rows.filter((r) => placed.get(r.w.id) === f.id);
+      const open = !f.folded || (this.pressed !== null && this.peek === `folder:${f.id}`);
+      out.push(this.folderHead(f, members, t, open));
+      // Folded, it still shows the space you're in and its unread ones, as a folded section does.
+      const shown = open ? members : this.ordered(members.filter((r) => r.w.active || this.unread.has(r.w.id)));
+      // Dropped on the header, a space goes in: the line shows under its last row.
+      shown.forEach((r, n) => out.push(...this.withThreads({ ...r, end: open && n === shown.length - 1 ? `folder:${f.id}` : null }, t)));
+    }
+    for (const r of rows) if (!placed.get(r.w.id)) out.push(...this.withThreads(r, t));
+    return out;
+  }
+
+  // A folder's header, as a section's: its folder icon in its color, its name, the counts of its spaces while folded.
+  folderHead(f, members, t, open) {
+    const needs = open ? 0 : members.reduce((n, r) => n + this.needs(r.w), 0);
+    const ready = open ? 0 : members.reduce((n, r) => n + this.readyIn(r.w), 0);
+    const line = this.pressed !== null && this.over === `folder:${f.id}` && (!open || !members.length);
+    const color = folderColor(f.color);
+    return this.groupHead(`folder-${f.id}`, t)
+      .on_click((_e, cx) => this.folders.fold(cx, f.id))
+      .on_mouse_move((_e, cx) => this.drag(`folder:${f.id}`, null, cx))
+      .child(div().w(18).flex_none().flex().justify_center()
+        .child(svg("mods/workspace-chrome/folder.svg").size(14).when(Boolean(color), (el) => el.text_color(color))))
+      .child(div().flex_1().min_w(0).truncate().child(f.name ?? ""))
+      .when(needs > 0 || ready > 0, (el) => el.child(countBadge(needs, ready, t.chrome)))
+      .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none())
+      .when(line, (el) => el.child(this.line(t, "bottom")));
   }
 
   sectionHead(s, members, t, open) {
@@ -590,9 +650,10 @@ export default class Spaces extends View {
     if (this.pressed === null) return;
     const from = spaces().find((s) => s.id === this.pressed);
     const next = from && (machine === ANY || (from.machine ?? null) === (machine ?? null)) ? over : null;
-    // Over a folded section's header, it opens until the drop; over another section, that one does.
-    const sec = next === "pinned" ? "pinned" : next?.startsWith("section:") ? next.slice(8) : null;
-    const shut = sec === "pinned" ? data().pinnedFolded : sectionsOf(machine).find((s) => s.id === sec)?.folded;
+    // Over a folded section's (or folder's) header, it opens until the drop; over another section, that one does.
+    const sec = next === "pinned" ? "pinned" : next?.startsWith("section:") ? next.slice(8) : next?.startsWith("folder:") ? next : null;
+    const shut = sec === "pinned" ? data().pinnedFolded : sec?.startsWith("folder:") ? this.folders.folded(sec.slice(7))
+      : sectionsOf(machine).find((s) => s.id === sec)?.folded;
     const peek = sec && shut ? sec : sec ? null : this.peek;
     if (this.over !== next || this.peek !== peek) {
       this.over = next;
@@ -608,7 +669,7 @@ export default class Spaces extends View {
     this.over = null;
     this.peek = null;
     if (from !== null && over === `space:${from}`) run("space.select", { id: from });
-    else if (from !== null && over) this.drop(from, over);
+    else if (from !== null && over) this.drop(from, over, cx);
     cx.notify();
   }
 
@@ -630,8 +691,9 @@ export default class Spaces extends View {
     return sp.findIndex((s) => s.id === from) < sp.findIndex((s) => s.id === to) ? "bottom" : "top";
   }
 
-  // Into Pinned (its heading, among its spaces), or out of it to anywhere else.
-  drop(from, over) {
+  // Into Pinned (its heading, among its spaces), or out of it to anywhere else. Into a folder (its header, among its
+  // spaces) or out of one (onto a space in none, the machine's header) writes the folders' file (folders.js).
+  drop(from, over, cx) {
     if (over === "pinned") return pin(from);
     const cut = over.indexOf(":");
     const kind = over.slice(0, cut), id = over.slice(cut + 1);
@@ -643,19 +705,38 @@ export default class Spaces extends View {
     }
     if (pins.includes(from)) pin(from, false);
     if (kind === "section") placeSpace(from, id);
-    else if (kind === "top") placeSpace(from, null);
-    else if (kind === "space" && id !== from) {
+    else if (kind === "folder") {
+      if (sectionOf(from)) placeSpace(from, null);
+      this.refile(from, id, cx);
+    } else if (kind === "out") this.refile(from, null, cx);
+    else if (kind === "top") {
+      placeSpace(from, null);
+      // out of its folder only when it showed in one (not one leaving Pinned or a section: its folder stays)
+      if (id === "null" && this.folderRows.get(from)) this.refile(from, null, cx);
+    } else if (kind === "space" && id !== from) {
       const sec = sectionOf(id);
       if (sec) {
         const at = sec.spaces.filter((x) => x !== from).indexOf(id);
         placeSpace(from, sec.id, this.edge(from, id) === "bottom" ? at + 1 : at);
       } else {
         if (sectionOf(from)) placeSpace(from, null);
+        // dropped among a folder's spaces it goes in that one; among those in none, out of the folder it showed in
+        const into = this.folderRows.get(id) ?? null;
+        if (this.folderRows.has(id) && (into || this.folderRows.get(from))) this.refile(from, into, cx);
         // space.move takes the target's place, counted from 1: the rest shift toward where it was.
         const i = spaces().findIndex((s) => s.id === id);
         if (i >= 0) run("space.move", { id: from, index: i + 1 });
       }
     }
+  }
+
+  // This computer's space into a folder (or none: null), written only when that isn't where it goes already.
+  refile(from, folder, cx) {
+    const d = this.folders.data, s = spaces().find((x) => x.id === from);
+    if (!d || !s || s.machine) return;
+    const at = folderPlace(s, panes());
+    const now = this.folderRows.has(from) ? this.folderRows.get(from) : folderOf(d, from, at);
+    if ((now ?? null) !== (folder ?? null)) this.folders.put(cx, from, folder ?? null, at);
   }
 
   // What needs the person in a space, for its red count, and its tasks in Ready, for its green
@@ -793,8 +874,10 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
+    const voice = this.voiceRow(t, collapsed);
+    const strip = collapsed ? null : this.outStrip(t);
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(this.voiceRow(t, collapsed))
+      .when(Boolean(voice), (el) => el.child(voice))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(TEXT.label).font_medium().text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
         // As a machine's +: New space, New section, on the shown space's machine.
@@ -805,6 +888,18 @@ export default class Spaces extends View {
           .child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => this.release(cx))
-        .children(this.grouped(t, collapsed)));
+        .children(this.grouped(t, collapsed))
+        .when(Boolean(strip), (el) => el.child(strip)));
+  }
+
+  // While a space shown in a folder is dragged, a place to drop it out of every folder (the mod's dashed strip): with
+  // no machine header and every loose space in a folder there'd be none otherwise.
+  outStrip(t) {
+    if (this.pressed === null || !this.folderRows.get(this.pressed)) return null;
+    const on = this.over === "out:null";
+    return div().id("folder-out").mt(6).h(34).flex_none().flex().items_center().justify_center().rounded(RADIUS.card)
+      .border_1().border_dashed().border_color(on ? t.accent : t.border).text_size(TEXT.label).text_color(on ? t.foreground : t.dim)
+      .on_mouse_move((_e, cx) => this.drag("out:null", null, cx))
+      .child("Drop here to take it out of its folder");
   }
 }
