@@ -16,14 +16,14 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type Keybo
 import { act, counts, definePlugin, getState, goPlace, has, manyMachines, openSplit, openTask, placeOf, removeSpace, setUI, splitClick, taskChat, useRestNow, useSnap, useUI, type Pane, type UI } from '@client/kernel.ts'
 import { Dialog, RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
 import { AutopilotIcon, BackIcon, BellIcon, CheckIcon, ClockIcon, CogIcon, BellSlashIcon, AttentionBadge, attentionWords, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, ModelIcon, MonitorIcon, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TaskDot, TasksIcon, UnpinIcon } from '@client/ui.tsx'
-import { placeThreads, type Thread } from '@client/threads.ts'
+import { placeThreads, threadTabShown, type Thread } from '@client/threads.ts'
 import { restMenu, useRest } from '@plugins/tasks/rest.tsx'
 import { HealthDot, MachineMeter } from '@plugins/health/client.tsx'
 import { toast } from '@plugins/alerts/toasts.tsx'
 import { MarkRead, markPlaceRead, muted, placeUnread } from '@client/unread.ts'
 import { RestartItem } from '@client/restart.tsx'
 import { NOTIFY, NOTIFY_KEY, notifyOf, notifyRow, taskWho } from '@shared/alerts.ts'
-import { kept, PINNED, sectionsIn, TOP, type PlaceOrder } from '@shared/order.ts'
+import { kept, moveIn, PINNED, sectionsIn, TOP, type PlaceOrder } from '@shared/order.ts'
 import { machineName, NAME_MAX, nameProblem, slugify, type Folder, type Machine, type Place, type Section, type Snapshot } from '@shared/types.ts'
 import { AddSpace, asTyped, openAddSpace } from './add.tsx'
 import { dragging, press } from './drag.ts'
@@ -139,16 +139,10 @@ function reorder(under: string, ids: string[]) {
 
 /** a space into a section (PINNED too) or back under its machine (to: its id), before another there or last */
 function moveTo(id: string, to: string, before?: string) {
-  const lists = { ...listsOf(getState().snap!), ...pending }
-  const from = Object.keys(lists).find((k) => groupKey(k) && lists[k].includes(id))
-  if (from === to && !before) return
-  const next: PlaceOrder = {}
-  if (from) next[from] = lists[from].filter((x) => x !== id)
-  const there = (next[to] ?? lists[to] ?? []).filter((x) => x !== id)
-  const i = before ? there.indexOf(before) : -1
-  next[to] = i < 0 ? [...there, id] : [...there.slice(0, i), id, ...there.slice(i)]
-  if (to.startsWith('m:') && !before) loose.add(next[to])
-  hold(next, act({ type: 'move', id, to, ...(before ? { before } : {}) }))
+  const m = moveIn({ ...listsOf(getState().snap!), ...pending }, id, to, before, groupKey)
+  if (!m) return
+  if (m.loose) loose.add(m.next[to])
+  hold(m.next, act({ type: 'move', id, to, ...(m.before ? { before: m.before } : {}) }))
 }
 
 /** where a row can be moved, and Alt+Shift+↑/↓ moving it one step */
@@ -218,7 +212,7 @@ function folderShut(f: Folder) {
 }
 function toggleFolder(f: Folder) {
   setFolderFold({ ...folderFold, [f.id]: { shut: !folderShut(f), at: Date.now() } })
-  void act({ type: 'folder', op: 'fold', id: f.id }).catch(() => {
+  void act({ type: 'folder', op: 'fold', id: f.id, folded: folderFold[f.id].shut }).catch(() => {
     const { [f.id]: _, ...rest } = folderFold
     setFolderFold(rest)
   })
@@ -709,7 +703,7 @@ function ThreadRow({ t, p, snap, pad, data }: { t: Thread; p: Place; snap: Snaps
     if (menu.held()) return
     if (task) return splitClick(e) ? openSplit({ kind: 'task', id: task.id }) : openTask(task.id)
     goPlace(p.id)
-    setUI({ term: tab!.term, arts: null, menu: false, plus: null, pick: null })
+    setUI(threadTabShown(tab!))
   }
   return (
     <li {...data} {...(menuable ? menu.press : {})}

@@ -238,11 +238,21 @@ describe("ASH-14 review: a late answer never overwrites a newer action's mark (i
     let marks = marksWith({}, "agent:t1", snooze, NOW);
     marks = marksWith(marks, "agent:t1", wake, NOW + 5);
     // the slow snooze answers after the wake: the wake's mark stays
-    expect(marksAfter(marks, "agent:t1", snooze, restMark("snooze", NOW + 3600_000, snooze.at), NOW + 6)).toBe(marks);
+    expect(marksAfter(marks, "agent:t1", snooze, restMark("snooze", NOW + 3600_000, undefined, snooze), NOW + 6)).toBe(marks);
     expect(marksAfter(marks, "agent:t1", snooze, null, NOW + 6)).toBe(marks);
-    // its own: replaced or dropped
+    // its own: replaced (keeping its request's at and seq) or dropped
     expect(marksAfter(marks, "agent:t1", wake, null, NOW + 6)).toEqual({});
-    expect(marksAfter(marks, "agent:t1", wake, restMark("snooze", 9, wake.at), NOW + 6)["agent:t1"]).toEqual({ rest: "snoozed", until: 9, at: NOW + 5 });
+    expect(marksAfter(marks, "agent:t1", wake, restMark("snooze", 9, undefined, wake), NOW + 6)["agent:t1"]).toEqual({ rest: "snoozed", until: 9, at: NOW + 5, seq: wake.seq });
+  });
+  test("two actions on a row in the same millisecond are two requests (recheck item 3)", () => {
+    const snooze = restMark("snooze", null, NOW), wake = restMark("wake", null, NOW);
+    expect(snooze.at).toBe(wake.at);
+    expect(snooze.seq).not.toBe(wake.seq);
+    const marks = marksWith(marksWith({}, "agent:t1", snooze, NOW), "agent:t1", wake, NOW);
+    // the snooze's late answer (or refusal) leaves the wake's mark, though both were asked at NOW
+    expect(marksAfter(marks, "agent:t1", snooze, restMark("snooze", NOW + 3600_000, undefined, snooze), NOW)).toBe(marks);
+    expect(marksAfter(marks, "agent:t1", snooze, null, NOW)).toBe(marks);
+    expect(marksAfter(marks, "agent:t1", wake, null, NOW)).toEqual({});
   });
 });
 

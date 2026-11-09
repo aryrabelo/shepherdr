@@ -297,14 +297,19 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   const sec = (id: unknown) => (typeof id === "string" && id.startsWith("s:") ? id.slice(2) : null);
   if (b?.type === "move" && typeof b.id === "string" && typeof b.to === "string" && sh) {
     // ASH-15: into a folder (this computer's spaces only; Pinned and a section come first, so a folder move leaves
-    // both), or back to its machine's own top, which also leaves its folder
+    // both), or back to its machine's own top, which takes it out of the folder it showed in (only then: one leaving
+    // Pinned or a section keeps the folder its rules give it). A folder's spaces keep Herdr's order: no `before`.
     if (b.to.startsWith("f:") || b.to.startsWith("m:")) {
-      const folder = compat.folders?.idOf(b.to) ?? null;
+      const fs = compat.folders, folder = fs?.idOf(b.to) ?? null;
       if (b.to.startsWith("f:") && !folder) throw new Error("That folder is gone.");
       const sp = compat.spaceOf(b.id);
       if (folder && (!sp || sp.machine)) throw new Error("Only this computer's spaces go in a folder.");
+      const wasIn = fs?.shown.get(b.id) ?? null;
       await sh.set("spaces-chat", withMove(bar(), b.id, null, null));
-      if (sp && !sp.machine) compat.folders?.change((d) => F.withSpaceIn(d, b.id, folder, sp.folder) as typeof d);
+      if (fs && sp && !sp.machine && (folder || wasIn)) {
+        const at = fs.places.get(b.id) ?? sp.folder;
+        fs.change((d) => F.withSpaceIn(d, b.id, folder, at) as typeof d);
+      }
       return { ok: true };
     }
     const to = b.to === "pinned" ? "pinned" : sec(b.to);
@@ -344,11 +349,12 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     await sh.set("spaces-chat", d);
     return { ok: true };
   }
-  // ASH-15: a folder folded or opened, written to its file (the space-folders mod's: both layouts fold the same)
-  if (b?.type === "folder" && b.op === "fold" && compat.folders) {
+  // ASH-15: a folder folded or opened, written to its file (the space-folders mod's: both layouts fold the same). The
+  // state it was tapped to, never a toggle done again on a newer copy.
+  if (b?.type === "folder" && b.op === "fold" && compat.folders && typeof b.folded === "boolean") {
     const id = compat.folders.idOf(b.id);
     if (!id) throw new Error("That folder is gone.");
-    compat.folders.change((d) => F.withFolderFolded(d, id) as typeof d);
+    compat.folders.change((d) => F.withFolderFolded(d, id, b.folded) as typeof d);
     return { ok: true };
   }
   if (b?.type === "section" && sh) {

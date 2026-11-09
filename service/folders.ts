@@ -4,7 +4,7 @@
 // only when its `at` goes up, and no file means no folders. A fold or a drag from the page is written over the text it
 // was read from (renamed into place only while the file still says that; else read again and done again, 3 tries), its
 // `at` past that one. A missing file is never made here.
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { HOME } from "./paths.ts";
 import * as F from "../core/folders.js";
 const { foldersPath, keepFolders, foldersOf, folderColor, foldersText } = F as any;
@@ -19,7 +19,21 @@ export function readText(path: string): string | null {
   try { return readFileSync(path, "utf8"); } catch (e) { if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return null; throw e; }
 }
 
-/** `op` on the folders the file holds now, written over the text it was read from. What to keep in hand after. */
+/** Held around reading the file again, comparing and renaming, so two of the service's writes never interleave. A lock
+ *  left behind (a crash) goes after LOCK_STALE ms. */
+export const LOCK_STALE = 10_000;
+function locked<T>(path: string, f: () => T): T | undefined {
+  const lock = `${path}.lock`;
+  let fd: number;
+  try { fd = openSync(lock, "wx"); } catch {
+    try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE) unlinkSync(lock); } catch {}
+    return undefined;
+  }
+  try { return f(); } finally { closeSync(fd); try { unlinkSync(lock); } catch {} }
+}
+
+/** `op` on the folders the file holds now, written over the text it was read from: under the lock, renamed in only
+ *  while the file still says that. What to keep in hand after. */
 export function changeFolders(path: string, now: FolderData, op: (d: NonNullable<FolderData>) => NonNullable<FolderData>): FolderData {
   let prev = now;
   for (let i = 0; i < 3; i++) {
@@ -32,8 +46,12 @@ export function changeFolders(path: string, now: FolderData, op: (d: NonNullable
     const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
     try {
       writeFileSync(tmp, foldersText(next));
-      // still the text it was read from: in its place at once
-      if (readText(path) === text) { renameSync(tmp, path); return next; }
+      const done = locked(path, () => {
+        if (readText(path) !== text) return false;
+        renameSync(tmp, path);
+        return true;
+      });
+      if (done) return next;
       unlinkSync(tmp);
     } catch {
       try { unlinkSync(tmp); } catch {}
@@ -43,19 +61,25 @@ export function changeFolders(path: string, now: FolderData, op: (d: NonNullable
   return prev;
 }
 
+type FolderSpace = { id: string; machine?: string | null; folder?: string; place?: string | null; pinned?: boolean; section?: string | null; git?: { linked: boolean; repo: string } | null };
+
 /** This machine's spaces in its folders, for the sidebar: those not pinned and in no section, each in the folder core
- *  folderOf gives it (a worktree space with its repo's own space, as the window nests it). Every folder, in the
- *  file's order, empty ones too. */
-export function folderGroups(d: FolderData, spaces: { id: string; machine?: string | null; folder?: string; pinned?: boolean; section?: string | null; git?: { linked: boolean; repo: string } | null }[]): FolderGroup[] {
-  if (!d) return [];
-  const mine = spaces.filter((s) => !s.machine && !s.pinned && !s.section);
+ *  folderOf gives it from where it works now (`place`: its first terminal's live folder, else `folder`, as the mod's).
+ *  A worktree space goes with its repo's own space, found among every space here (a pinned or sectioned repo too).
+ *  Every folder, in the file's order, empty ones too; `shown`: each listed space's folder (null: none). */
+export function folderGroups(d: FolderData, spaces: FolderSpace[]): { groups: FolderGroup[]; shown: Map<string, string | null> } {
+  if (!d) return { groups: [], shown: new Map() };
+  const here = spaces.filter((s) => !s.machine);
   const mains = new Map<string, string>();
-  for (const s of mine) if (s.git && !s.git.linked && !mains.has(s.git.repo)) mains.set(s.git.repo, s.id);
-  const placed = foldersOf(d, mine.map((s) => ({ id: s.id, path: s.folder ?? "", under: s.git?.linked ? mains.get(s.git.repo) ?? null : null }))) as Map<string, string | null>;
-  return d.list.map((f) => {
+  for (const s of here) if (s.git && !s.git.linked && !mains.has(s.git.repo)) mains.set(s.git.repo, s.id);
+  const placed = foldersOf(d, here.map((s) => ({ id: s.id, path: s.place || s.folder || "", under: s.git?.linked ? mains.get(s.git.repo) ?? null : null }))) as Map<string, string | null>;
+  const mine = here.filter((s) => !s.pinned && !s.section);
+  const shown = new Map(mine.map((s) => [s.id, placed.get(s.id) ?? null]));
+  const groups = d.list.map((f) => {
     const color = folderColor(f.color) as string | null;
-    return { id: `f:${f.id}`, name: String(f.name ?? ""), ...(color ? { color } : {}), folded: !!f.folded, spaces: mine.filter((s) => placed.get(s.id) === f.id).map((s) => s.id) };
+    return { id: `f:${f.id}`, name: String(f.name ?? ""), ...(color ? { color } : {}), folded: !!f.folded, spaces: mine.filter((s) => shown.get(s.id) === f.id).map((s) => s.id) };
   });
+  return { groups, shown };
 }
 
 /** The folders in hand, read again and changed (the service's own copy). */
@@ -75,6 +99,11 @@ export class Folders {
     this.onChange?.();
     return this.data;
   }
+
+  /** From the last build (model.ts): each listed space's folder (null: none; a pinned or sectioned one isn't listed) and
+   *  where each space works now, for the page's drags. */
+  shown = new Map<string, string | null>();
+  places = new Map<string, string>();
 
   /** a folder's id the file has, from the snapshot's f:<id>; null otherwise */
   idOf(key: unknown) {
