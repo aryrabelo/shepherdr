@@ -121,9 +121,10 @@ export const taskCan = (section, live = []) => ({ settle: section !== "done", sn
 
 // ---- at once (ASH-14) ---------------------------------------------------------------------------------------------
 // A row put away (or back) moves the moment it's asked, not when herdr-task's labels or the task's file come back: the
-// asker keeps a mark { rest: "settled" | "snoozed" | null, until?, at } by the row's key (restKey) for PENDING_MS at most,
-// and the views show it until what they read agrees (shownRest). A refusal drops it. An answer only touches the mark its
-// own request set (marksAfter): a later action on the same row wins over an earlier one's late answer.
+// asker keeps a mark { rest: "settled" | "snoozed" | null, until?, at, seq } by the row's key (restKey) for PENDING_MS at
+// most, and the views show it until what they read agrees (shownRest). A refusal drops it. An answer only touches the
+// mark its own request set (marksAfter, by its seq): a later action on the same row wins over an earlier one's late
+// answer, in the same millisecond too.
 export const PENDING_MS = 20000;
 // the window's marks, in its shared state (lib/rest.js writes them; the sidebar and the Tasks panel read them)
 export const PENDING = "tasks.restnow";
@@ -133,15 +134,21 @@ export function marksWith(marks, key, mark, now = Date.now()) {
   return mark ? { ...out, [key]: mark } : out;
 }
 // The marks after an answer to the request that set `asked`: its mark replaced (mark) or dropped (null), unless a newer
-// request on that row has set its own meanwhile; then they stay as they are.
+// request on that row has set its own meanwhile; then they stay as they are. A request is its seq (its time can be
+// another's: two in one millisecond).
 export function marksAfter(marks, key, asked, mark, now = Date.now()) {
-  return (marks ?? {})[key]?.at === asked?.at ? marksWith(marks, key, mark, now) : marks ?? {};
+  const m = (marks ?? {})[key];
+  return m && m.seq === asked?.seq && m.at === asked?.at ? marksWith(marks, key, mark, now) : marks ?? {};
 }
 // a row's key for its mark: a task (its machine, folder and id) or an agent (its address)
 export const restKey = (x) => (x?.ref ? `task:${x.machine ?? ""}:${x.folder ?? ""}:${x.ref}` : `agent:${x?.agent ?? ""}`);
-// the mark for a verb asked now: settle, unsettle, snooze (its wake time, when known), wake
-export const restMark = (verb, until = null, at = Date.now()) => ({ rest: verb === "settle" ? SETTLED : verb === "snooze" ? SNOOZED : null,
-  ...(verb === "snooze" && until ? { until } : {}), at });
+// Each request's own number. It starts at random: every mod of the window has its own copy of this file, all writing one
+// shared set of marks, so two copies' numbers never meet by chance.
+let seq = Math.floor(Math.random() * 1e9);
+// the mark for a verb asked now: settle, unsettle, snooze (its wake time, when known), wake. An answer's mark keeps its
+// request's at and seq (asked: that request's mark).
+export const restMark = (verb, until = null, at = Date.now(), asked = null) => ({ rest: verb === "settle" ? SETTLED : verb === "snooze" ? SNOOZED : null,
+  ...(verb === "snooze" && until ? { until } : {}), at: asked?.at ?? at, seq: asked?.seq ?? ++seq });
 // -> { info: the rest to show, keep: whether the mark still counts }. info as taskRest's. What's read agrees with the
 // mark once it has the same rest and, for a snooze, the same wake time (a snooze moved to another time keeps the mark
 // until the new time is read); for a mark of none (Unsettle, Wake), once no snooze is set either (a snooze showing

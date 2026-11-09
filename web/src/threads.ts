@@ -4,6 +4,7 @@
 // by the row's chat key (core/settle.js restMark) until the snapshot agrees, refuses, or PENDING_MS passes, so the row
 // moves the moment it's asked, here and in the Tasks list.
 import type { Place, PlaceTab, Snapshot, Status, Task } from '@shared/types.ts'
+import { panesHere, type Pane, type Panes } from './panes.ts'
 import * as THc from '@core/threads.js'
 import * as RSc from '@core/settle.js'
 
@@ -11,7 +12,7 @@ type Rest = 'settled' | 'snoozed'
 /** a row's rest as core/settle.js taskRest/agentRest give it */
 export type RestInfo = { rest: Rest | null; at?: number | null; until?: number | null; woke?: number; showing?: boolean } | null
 /** a row put away (or back) just now: core/settle.js restMark */
-export type RestMark = { rest: Rest | null; until?: number; at: number }
+export type RestMark = { rest: Rest | null; until?: number; at: number; seq?: number }
 /** the marks on this device, by chat key */
 export type RestMarks = Record<string, RestMark>
 /** what the snapshot says of a row's rest (a task, a tab, a space's Assistant) */
@@ -20,7 +21,7 @@ type Restable = { rest?: Rest; restAt?: number; restUntil?: number; woke?: numbe
 const shownRest = RSc.shownRest as (info: RestInfo, mark: RestMark | undefined, now?: number) => { info: RestInfo; keep: boolean }
 const marksWith = RSc.marksWith as (marks: RestMarks, key: string, mark: RestMark | null, now?: number) => RestMarks
 const marksAfter = RSc.marksAfter as (marks: RestMarks, key: string, asked: RestMark, mark: RestMark | null, now?: number) => RestMarks
-const restMark = RSc.restMark as (verb: string, until?: number | null, at?: number) => RestMark
+const restMark = RSc.restMark as (verb: string, until?: number | null, at?: number, asked?: RestMark | null) => RestMark
 const isThread = THc.isThread as (section: string, rest?: Rest | null) => boolean
 const agentSection = THc.agentSection as (word: string | null) => 'needs' | 'working' | 'idle'
 const agentLine = THc.agentLine as (word: string | null, info: RestInfo, now?: number) => string | null
@@ -59,30 +60,48 @@ export function markedTask(t: Task, mark: RestMark | undefined, now = Date.now()
   return { ...own, ...(line ? { sub: line } : {}) }
 }
 
-/** what Ctrl+Shift+S (chat.settle) puts away or back for the chat in view (key), as it shows with its mark: a task's
- *  (its agent's chat; or the task open with no agent at all, when the key fell back to its space's chat), one that can
- *  be settled (canSettle: with no live agent too); an agent of its space's own in a tab (a thread); a space's live
- *  Assistant. null: nothing there to settle. */
+/** where the keys are on this screen: the focused split pane (none: no split, or the open task on the right has the
+ *  focus: split.pane -1), the open task, the tab shown in the middle (ui.term), the space shown */
+export type KeysAt = { pane: Pane | null; task: string | null; term: string | null; place: string }
+/** KeysAt from the screen's UI state (kernel UI: device, split, task, term, place) */
+export function settleKeys(ui: { device: string; split: Panes; task: string | null; term: string | null; place: string }): KeysAt {
+  return { pane: panesHere(ui)[ui.split.pane] ?? null, task: ui.task ?? null, term: ui.term ?? null, place: ui.place }
+}
+
+/** what Ctrl+Shift+S (chat.settle) puts away or back, as it shows with its mark: the focused pane's (a space, or a
+ *  task); else the open task (it takes the keys, as kernel keysChat); else the shown space. A space is the tab it shows
+ *  (ui.term, as the tab bar's shownTab: an agent's tab of its own is a thread, which a thread's click shows, ASH-14),
+ *  else its Assistant. A task is one that can be settled (canSettle: with no live agent too), by its agent's chat or,
+ *  with none at all, its own key. null: nothing there to settle (a shell's tab, a done task, a space without its
+ *  Assistant). */
 export type SettleTarget = { chat: string; rest?: Rest; restUntil?: number; task?: Task; tab?: PlaceTab; place?: Place }
-export function settleTarget(snap: Snapshot, key: string, openTask: string | null, marks: RestMarks = {}, now = Date.now()): SettleTarget | null {
-  const own = snap.places.find((x) => x.chat === key)
-  const task = snap.tasks.find((x) => x.agent?.chat === key) ?? (own && openTask ? snap.tasks.find((x) => x.id === openTask && !x.agent) : undefined)
-  if (task) {
-    if (!task.canSettle || task.archived) return null
+export function settleFor(snap: Snapshot, at: KeysAt, marks: RestMarks = {}, now = Date.now()): SettleTarget | null {
+  const ofTask = (id: string): SettleTarget | null => {
+    const task = snap.tasks.find((x) => x.id === id)
+    if (!task?.canSettle || task.archived) return null
     const m = marked(task, marks[taskChat(task)], now)
     return { chat: taskChat(task), rest: m.rest, restUntil: m.restUntil, task }
   }
-  const tab = snap.places.flatMap((x) => x.tabs ?? []).find((x) => x.term === key && x.thread)
-  if (tab) {
-    const m = marked(tab, marks[key], now)
-    return { chat: key, rest: m.rest, restUntil: m.restUntil, tab }
+  const ofPlace = (id: string): SettleTarget | null => {
+    const place = snap.places.find((x) => x.id === id)
+    const tab = at.term?.startsWith('t:') ? place?.tabs?.find((x) => x.term === at.term) : undefined
+    if (tab) {
+      if (!tab.thread) return null
+      const m = marked(tab, marks[tab.term], now)
+      return { chat: tab.term, rest: m.rest, restUntil: m.restUntil, tab }
+    }
+    if (!place?.assistantTab?.live) return null
+    const m = marked(place, marks[place.chat], now)
+    return { chat: place.chat, rest: m.rest, restUntil: m.restUntil, place }
   }
-  if (own?.assistantTab?.live) {
-    const m = marked(own, marks[key], now)
-    return { chat: key, rest: m.rest, restUntil: m.restUntil, place: own }
-  }
-  return null
+  if (at.pane) return at.pane.kind === 'task' ? ofTask(at.pane.id) : at.pane.kind === 'place' ? ofPlace(at.pane.id) : null
+  return at.task ? ofTask(at.task) : ofPlace(at.place)
 }
+
+/** what a thread of an agent's own (its tab) opening leaves on the screen, after its space is shown (kernel goPlace:
+ *  no open task): its tab in the middle (ThreadRow's click) */
+export const threadTabShown = (tab: PlaceTab): { term: string; arts: null; menu: false; plus: null; pick: null } =>
+  ({ term: tab.term, arts: null, menu: false, plus: null, pick: null })
 
 /** the tasks as they show with the marks on this device */
 export const withMarks = (ts: Task[], marks: RestMarks, now = Date.now()): Task[] =>

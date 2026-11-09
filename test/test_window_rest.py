@@ -17,8 +17,8 @@ def read(*p):
         return f.read()
 
 
-# lib/rest.js with its imports swapped for fakes: exec records each herdr-task call and answers from `answers`; the
-# at-once marks are core/settle.js's own (CORE).
+# lib/rest.js with Herdr's API and ui.js swapped for fakes: exec records each herdr-task call and answers from `answers`;
+# its core/settle.js is the real one (its import pointed at the source: node_script).
 HARNESS = r"""
 const calls = [], toasts = [], store = {};
 const answers = { settle: { ok: true, settled: ["t1"], at: 1, was_snoozed: { t1: Date.now() + 3600000 } },
@@ -34,9 +34,6 @@ const shared = (k) => store[k];
 const setShared = (k, v) => { store[k] = v; };
 const toast = (n) => toasts.push(n);
 const plainError = (e) => String(e?.message ?? e);
-const REST = { settledToast: (w) => ({ title: `Settled ${w}`, body: "Click to undo." }),
-  snoozedToast: (w, when) => ({ title: `Snoozed ${w}`, body: `Wakes ${when}. Click to undo.` }) };
-CORE
 SOURCE
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const out = {};
@@ -65,16 +62,34 @@ undoRest(Number(toasts[1].action.name.split("undo-rest-")[1]));
 await tick();
 out.lastCall = calls[calls.length - 1];
 out.markAfterSnoozeUndo = "agent:t7" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t7"].rest : "none";
-// ASH-14 review: a slow Snooze answering after a Wake on the same row leaves the Wake's mark (awake) alone
+// ASH-14 review: a slow Snooze answering after a Wake on the same row leaves the Wake's mark (awake) alone; recheck item
+// 3: both asked in the same millisecond (the clock held still), so only each request's own number tells them apart
 let open;
 gates.snooze = new Promise((r) => { open = r; });
+const realNow = Date.now, held = realNow();
+Date.now = () => held;
 const slow = snooze({ agent: "t8" }, "t8", { in: "1h", label: "In 1 hour" });
 await tick();
 await wake({ agent: "t8" }, "t8");
 open();
 await slow;
 await tick();
+out.sameMs = store["tasks.restnow"]?.["agent:t8"]?.at === held;
 out.markAfterLateSnooze = "agent:t8" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t8"].rest : "none";
+Date.now = realNow;
+delete gates.snooze;
+// and a refusal of the slow one, after the wake, leaves the wake's mark too
+gates.snooze = new Promise((r) => { open = r; });
+answers.snooze = "refuse";
+Date.now = () => held + 1;
+const refused = snooze({ agent: "t6" }, "t6", { in: "1h", label: "In 1 hour" });
+await tick();
+await wake({ agent: "t6" }, "t6");
+open();
+await refused;
+await tick();
+out.markAfterLateRefusal = "agent:t6" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t6"].rest : "none";
+Date.now = realNow;
 delete gates.snooze;
 // a refusal takes the mark back
 answers.settle = "refuse";
@@ -85,14 +100,60 @@ console.log(JSON.stringify(out));
 """
 
 
+# chat.settle (lib/rest.js settleInView, mods/chat settleKey) on what's in view, faked as above; files: what readTextFile
+# reads (a task's list on its machine).
+KEY_HARNESS = r"""
+const calls = [], toasts = [], store = {}, reads = [];
+const answers = { settle: { ok: true, settled: [], at: 1, was_snoozed: {} }, unsettle: { ok: true }, snooze: { ok: true }, wake: { ok: true } };
+const exec = async (cmd, args) => { calls.push(args); const verb = args.find((a) => answers[a]); return { code: 0, stdout: JSON.stringify(answers[verb]) }; };
+const appHome = () => "/app";
+const home = () => "/home/me";
+const files = {};
+const readTextFile = async (path, opts) => { reads.push([path, opts?.on ?? null]); if (!(path in files)) throw new Error("no file"); return files[path]; };
+const shared = (k) => store[k];
+const setShared = (k, v) => { store[k] = v; };
+const toast = (n) => toasts.push(n);
+const plainError = (e) => String(e?.message ?? e);
+SOURCE
+const NOW = Date.now();
+const task = { machine: "vm", folder: "/w", ref: "HERD-3", slug: "w", id: 3 };
+const list = (t) => JSON.stringify({ folder: "/w", tasks: [{ id: 3, state: "running", started: NOW - 9000, agents: [{ address: "t1", at: NOW - 9000 }], ...t }] });
+// each from a clean slate: the marks a previous run left (a settle marks its row) aside
+const run = async (view, marks = {}) => { calls.length = 0; store["tasks.restnow"] = marks; const verb = await settleInView({ what: "x", ...view }); return { verb, calls: calls.map((c) => c.join(" ")) }; };
+const out = {};
+// a task's thread whose agent has ended, settled (kept on the task): the key unsettles it, on its machine
+files["/home/me/.herdr/tasks/w.json"] = list({ settled_at: NOW - 1000 });
+out.kept = await run({ task });
+// the same, not settled: the key settles it (no live agent needed)
+files["/home/me/.herdr/tasks/w.json"] = list({});
+out.stopped = await run({ task });
+// its list unreadable: not known to be settled, so it settles
+delete files["/home/me/.herdr/tasks/w.json"];
+out.noFile = await run({ task });
+// an agent of its own at work or asking: nothing (its turn would end the settle)
+out.working = await run({ live: { address: "t4", turn: 2, status: "working", labels: {} }, agent: "t4" });
+out.asking = await run({ live: { address: "t4", turn: 2, status: "blocked", labels: {} }, agent: "t4" });
+// settled by its label: unsettled; settled a moment ago from its row (its mark; the label not read yet): unsettled too
+out.labelled = await run({ live: { address: "t4", turn: 2, status: "idle", labels: { settled: `${NOW}:2` } }, agent: "t4" });
+out.marked = await run({ live: { address: "t4", turn: 2, status: "idle", labels: {} }, agent: "t4" }, { "agent:t4": { rest: "settled", at: NOW, seq: 1 } });
+out.reads = reads;
+console.log(JSON.stringify(out));
+"""
+
+
+def node_script(body):
+    """lib/rest.js inside a harness: Herdr's API and ui.js as the harness fakes them, core/settle.js the real source."""
+    src = read("lib", "rest.js")
+    src = src.replace('from "./core/settle.js"', f'from "file://{J("core", "settle.js")}"')
+    src = re.sub(r'^import .*? from "(herdr|\./ui\.js)";\n', "", src, flags=re.M)
+    return body.replace("SOURCE", src)
+
+
 class WindowRest(unittest.TestCase):
     def run_harness(self):
         if not shutil.which("node"):
             self.skipTest("node isn't installed")
-        src = read("lib", "rest.js")
-        src = re.sub(r'^import .*?;\n', "", src, flags=re.M | re.S)
-        core = f'import {{ PENDING, restKey, restMark, marksWith, marksAfter }} from "file://{J("core", "settle.js")}";'
-        script = HARNESS.replace("CORE", core).replace("SOURCE", src)
+        script = node_script(HARNESS)
         r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
@@ -123,12 +184,38 @@ class WindowRest(unittest.TestCase):
         self.assertIsNone(out["markAfterSnoozeUndo"])
         self.assertFalse(out["markAfterRefusal"])
 
+    def test_settle_key_on_what_is_in_view(self):
+        """ASH-14 recheck (item 1): Ctrl+Shift+S in the window (mods/chat settleKey -> lib/rest.js settleInView) reaches a
+        task's thread with no live agent (its kept settle, read from its list's file on its machine) and goes by what
+        shows now (a live agent's label, its row's mark); never over an agent at work or asking."""
+        if not shutil.which("node"):
+            self.skipTest("node isn't installed")
+        r = subprocess.run(["node", "--input-type=module", "-e", node_script(KEY_HARNESS)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        task = "--on vm {} HERD-3 --folder /w --json"
+        self.assertEqual(out["kept"], {"verb": "unsettle", "calls": [task.format("unsettle")]})
+        self.assertEqual(out["stopped"], {"verb": "settle", "calls": [task.format("settle")]})
+        self.assertEqual(out["noFile"], {"verb": "settle", "calls": [task.format("settle")]})
+        self.assertEqual(out["working"], {"verb": None, "calls": []})
+        self.assertEqual(out["asking"], {"verb": None, "calls": []})
+        self.assertEqual(out["labelled"], {"verb": "unsettle", "calls": ["unsettle --agent t4 --json"]})
+        self.assertEqual(out["marked"], {"verb": "unsettle", "calls": ["unsettle --agent t4 --json"]})
+        # the task's list, on the task's machine
+        self.assertEqual(out["reads"], [["/home/me/.herdr/tasks/w.json", "vm"]] * 3)
+        # mods/chat's key goes through it
+        key = read("mods", "chat", "main.js")
+        self.assertIn("settleInView({ live: k, task, agent: this.addr", key)
+
     def test_review_undo_snooze_back_and_late_answers(self):
         """ASH-14 review (items 4 and 7): undoing a settle that ended a snooze marks the row snoozed until then at
         once, never awake; a slow Snooze's answer after a Wake on the same row leaves the Wake's mark alone."""
         out = self.run_harness()
         self.assertEqual((out["markOnUndo"]["rest"], out["markOnUndo"]["until"]), ("snoozed", out["wasSnoozed"]))
         self.assertIsNone(out["markAfterLateSnooze"])
+        # recheck (item 3): in one millisecond too, a late answer or a late refusal; the wake's mark stays
+        self.assertTrue(out["sameMs"])
+        self.assertIsNone(out["markAfterLateRefusal"])
 
     def test_window_wiring(self):
         """Every surface goes through rest.js and core's lists; what counts as news leaves rest out."""
@@ -141,13 +228,6 @@ class WindowRest(unittest.TestCase):
         chat = read("mods", "chat", "main.js")
         for n in ('c === "settle"', "settleKey", "wakeSeen", "notNews"):
             self.assertIn(n, chat)
-        # ASH-14 review (item 1): the key reaches a task's thread with no live agent (its kept settle, from its list's
-        # file) and what shows now (its row's mark): core keyVerb, never only a live terminal's labels
-        key = chat[chat.index("  settleKey() {"):]
-        key = key[:key.index("\n  }\n")]
-        for n in ("keyVerb(shownRest(", "keptSettle(t)", "if (!k && !task) return;", ".herdr/tasks/${key.slug}.json"):
-            self.assertIn(n, key)
-        self.assertNotIn("if (!k) return;", key)
         self.assertIn('c.startsWith("undo-rest-")', read("mods", "tabs-tasks", "main.js"))
         tasks = read("mods", "tasks", "main.js")
         for n in ("REST.snoozed", "REST.settled", '"settled:open"', "openRowMenu(pin)", "taskCan("):

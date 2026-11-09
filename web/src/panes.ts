@@ -27,6 +27,12 @@ export const NO_PANES: Panes = { panes: [], pane: 0, sizes: [] }
 
 export const samePane = (a: Pane) => (b: Pane) => a.kind === b.kind && a.id === b.id
 
+/** the panes the middle shows: a desktop's (none: the middle as always) */
+export function panesHere(ui: { device: string; split: Panes }): Pane[] {
+  return ui.device === 'desktop' ? ui.split.panes : NONE
+}
+const NONE: Pane[] = []
+
 /** a single place's chat is the middle as always: no panes then */
 export function normal(v: Panes): Panes {
   const { panes } = v
