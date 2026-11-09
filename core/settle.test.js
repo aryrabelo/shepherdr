@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { settledValue, parseSettled, stillSettled, snoozedUntil, napping, woke, hidden, notNews, stale, taskRest, restFields, wordOf,
-  keptSettle, agentRest, taskCan, restKey, restMark, shownRest, PENDING_MS } from "./settle.js";
+  keptSettle, agentRest, taskCan, restKey, restMark, shownRest, PENDING_MS, marksWith, marksAfter, keyVerb } from "./settle.js";
 import { place, secondLine } from "./tasks.js";
 import { isUnread } from "./spaces.js";
 import { notifiesBy } from "./notify.js";
@@ -214,5 +214,48 @@ describe("ASH-14: a row moves the moment it's asked", () => {
     expect(shownRest({ rest: "settled", at: 1 }, restMark("unsettle", null, NOW), NOW)).toEqual({ info: null, keep: true });
     expect(shownRest({ rest: null, woke: 5 }, restMark("wake", null, NOW), NOW)).toEqual({ info: { rest: null, woke: 5 }, keep: false });
     expect(shownRest({ rest: "snoozed", until: 9 }, null, NOW)).toEqual({ info: { rest: "snoozed", until: 9 }, keep: false });
+  });
+});
+
+describe("ASH-14 review: what's read agrees with a mark only when it says the same", () => {
+  test("a snooze moved to another time keeps its mark until the new time is read (item 5)", () => {
+    const again = restMark("snooze", NOW + 7200_000, NOW);
+    expect(shownRest({ rest: "snoozed", until: NOW + 3600_000 }, again, NOW + 10)).toEqual({ info: { rest: "snoozed", until: NOW + 7200_000 }, keep: true });
+    expect(shownRest({ rest: "snoozed", until: NOW + 7200_000 }, again, NOW + 10).keep).toBe(false);
+    // a snooze's mark not answered yet (no time): any snooze read agrees
+    expect(shownRest({ rest: "snoozed", until: NOW + 3600_000 }, restMark("snooze", null, NOW), NOW + 10).keep).toBe(false);
+  });
+  test("Wake on a snooze showing because it needs you: awake at once, until no snooze is read (item 5)", () => {
+    const showing = { rest: null, until: NOW + 3600_000, showing: true };
+    expect(shownRest(showing, restMark("wake", null, NOW), NOW + 10)).toEqual({ info: null, keep: true });
+    expect(shownRest(null, restMark("wake", null, NOW), NOW + 10)).toEqual({ info: null, keep: false });
+  });
+});
+
+describe("ASH-14 review: a late answer never overwrites a newer action's mark (item 7)", () => {
+  test("marksAfter touches only the mark its own request set", () => {
+    const snooze = restMark("snooze", null, NOW), wake = restMark("wake", null, NOW + 5);
+    let marks = marksWith({}, "agent:t1", snooze, NOW);
+    marks = marksWith(marks, "agent:t1", wake, NOW + 5);
+    // the slow snooze answers after the wake: the wake's mark stays
+    expect(marksAfter(marks, "agent:t1", snooze, restMark("snooze", NOW + 3600_000, snooze.at), NOW + 6)).toBe(marks);
+    expect(marksAfter(marks, "agent:t1", snooze, null, NOW + 6)).toBe(marks);
+    // its own: replaced or dropped
+    expect(marksAfter(marks, "agent:t1", wake, null, NOW + 6)).toEqual({});
+    expect(marksAfter(marks, "agent:t1", wake, restMark("snooze", 9, wake.at), NOW + 6)["agent:t1"]).toEqual({ rest: "snoozed", until: 9, at: NOW + 5 });
+  });
+});
+
+describe("ASH-14 review: Ctrl+Shift+S on what shows now (item 1)", () => {
+  test("Unsettle once settled (a task with no live agent too), else Settle, never over a working or asking agent", () => {
+    expect(keyVerb({ rest: "settled", at: 1 }, "idle")).toBe("unsettle");
+    expect(keyVerb(keptSettle({ state: "running", settled_at: NOW, started: 1 }), null)).toBe("unsettle");
+    expect(keyVerb(null, null)).toBe("settle");
+    expect(keyVerb(null, "idle")).toBe("settle");
+    expect(keyVerb({ rest: "snoozed", until: NOW + 1 }, "idle")).toBe("settle");
+    expect(keyVerb(null, "working")).toBeNull();
+    expect(keyVerb(null, "blocked")).toBeNull();
+    // its row's mark counts: settled a moment ago, the key unsettles it
+    expect(keyVerb(shownRest(null, restMark("settle", null, NOW), NOW + 10).info, "idle")).toBe("unsettle");
   });
 });

@@ -14,7 +14,7 @@ import { setupGuarded } from './guard.tsx'
 import { followOff, note as noteUsage, noteAct, noteView, startUsage } from './usage.ts'
 import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
 import { machineName, resting, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
-import { marksLeft, marksWith, withMarks, type RestMark, type RestMarks } from './threads.ts'
+import { marksAfter, marksLeft, marksWith, withMarks, type RestMark, type RestMarks } from './threads.ts'
 import * as RSc from '@core/settle.js'
 
 /* ---------- slots ---------- */
@@ -608,6 +608,15 @@ export function markRest(chat: string, mark: RestMark | null): void {
     state = { ...state, restNow: left }
     emit()
   }, (RSc.PENDING_MS as number) + 100)
+}
+
+/** herdr-task's answer to the request that set `asked` on a row: its mark replaced (a snooze's wake time) or dropped
+ *  (null: refused), unless a newer action on that row set its own meanwhile (core/settle.js marksAfter) */
+export function answerRest(chat: string, asked: RestMark, mark: RestMark | null): void {
+  const next = marksAfter(state.restNow, chat, asked, mark)
+  if (next === state.restNow) return
+  state = { ...state, restNow: next }
+  emit()
 }
 
 /* ---------- drafts ---------- */

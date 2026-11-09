@@ -25,9 +25,9 @@ import { note } from "./usage.js";
 import { spaces, terminals, agents, inRender } from "./live.js";
 import { taskDot } from "./dot.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
-import { busyAgain, onIt } from "./core/tasks.js";
+import { briefStatus } from "./core/tasks.js";
 // Settled or snoozed by hand (ASH-12): said so, never Needs you.
-import { taskRest, restFields, REST } from "./core/settle.js";
+import { restFields, REST } from "./core/settle.js";
 // A space's name as the sidebar (and the web app) says it: never "~" (core/spaces.js).
 import { spaceName } from "./core/spaces.js";
 import { openViewer, showViewer, chatArea } from "./artview.js";
@@ -181,24 +181,10 @@ export default class Jump extends View {
       .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? k.status, turn: k.turn, role: k.labels?.["herdr.role"] ?? "worker", ...restFields(k) }));
   }
 
-  // A task's status as the Tasks panel names it, in short (its full rules: tasks/main.js place()).
+  // A task's status as the Tasks panel names it, in short (core/tasks.js briefStatus; its full rules: place()): settled
+  // or snoozed first, a stopped or queued one settled with no live agent too (ASH-14).
   status(task, live) {
-    const st = task.state;
-    if (["todo", "queued", "scheduled", "done"].includes(st)) return st;
-    // Put away by hand (core/settle.js taskRest): Settled or Snoozed, whatever it would say otherwise.
-    const rest = live.length ? taskRest(task, live)?.rest : null;
-    if (rest) return rest;
-    // A problem (failing checks) its agent is on (core/tasks.js onIt()): Working; nobody on it: Needs you.
-    const fixing = task.attention && onIt(task, live);
-    if ((task.attention && !fixing) || live.some((a) => a.status === "blocked")) return "needs";
-    if (fixing) return "working";
-    // Back at work after it said ready (core/tasks.js busyAgain()): Working.
-    if (st === "ready" && !busyAgain(task, live)) return task.merge_requested && live.length ? "merging" : "ready";
-    if (live.some((a) => a.status === "working")) return "working";
-    const last = task.agents?.[task.agents.length - 1];
-    const started = Math.max(0, ...[task.started, last?.at].filter((x) => typeof x === "number"));
-    if (!last?.ended && Date.now() - started < 90000) return "working";
-    return "needs";
+    return briefStatus(task, live);
   }
 
   items(q) {

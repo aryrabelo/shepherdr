@@ -105,13 +105,16 @@ export function queueNote(list, task, f = {}) {
 // "tasks-list", the task "tasks-thread", mods/chat/panel.js), never a side chat. Only where the shown layout has that
 // view. Shared "tasks.thread" = { terminal (its agent, live or its last one; null: never started), task (its id),
 // title, key ({ machine, folder, slug, id }), log ({ path, kind }: an ended agent's own log), note (why one never
-// started waits), at }. From outside the panel (the sidebar), the panel shows on its Tasks view first.
-const hasThread = (n) => Boolean(n && typeof n === "object") && (n.id === "tasks-thread" || (n.children ?? []).some(hasThread));
-export const threadsShown = (f = {}) => (f.threads ??= hasThread(layout()));
+// started waits), at }. From outside the panel (the sidebar), the panel shows on its Tasks view first; the task opens
+// on its chat (the thread's body: "tasks-thread-chat", not its Terminal, Files or Changes), as mods/chat/panel.js and
+// Jump open it.
+const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
+export const threadsShown = (f = {}) => (f.threads ??= hasNode(layout(), "tasks-thread"));
 export function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
   setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
   run("layout.select", { stack: "panel-body", child: "tasks" });
   run("layout.select", { stack: "tasks", child: "tasks-thread" });
+  if (hasNode(layout(), "tasks-thread-body")) run("layout.select", { stack: "tasks-thread-body", child: "tasks-thread-chat" });
   run("layout.show", { id: "panel" });
 }
 

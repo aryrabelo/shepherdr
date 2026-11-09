@@ -8,7 +8,7 @@
 import clsx from 'clsx'
 import { useState } from 'react'
 import { ArrowUturnLeftIcon } from '@heroicons/react/16/solid'
-import { markRest, restChat, type RestAnswer } from '@client/kernel.ts'
+import { answerRest, markRest, restChat, type RestAnswer } from '@client/kernel.ts'
 import { restMark } from '@client/threads.ts'
 import { BellIcon, CheckIcon, ClockIcon, field, ic, MenuItem, MenuLabel } from '@client/ui.tsx'
 import { toast } from '@plugins/alerts/toasts.tsx'
@@ -33,17 +33,19 @@ const said = (r: RestAnswer, fallback: string) => {
 
 type Verb = 'settle' | 'unsettle' | 'snooze' | 'wake'
 /** herdr-task asked for a chat, its row moved at once: its mark set before, dropped on a refusal; a snooze's gets its
- *  wake time from the answer, an Undo putting a snooze back is snoozed until then */
+ *  wake time from the answer, an Undo putting a snooze back is snoozed until then. An answer touches only this request's
+ *  mark: a newer action on the row (a Wake after a slow Snooze) keeps its own (kernel answerRest) */
 async function restNow(chat: string, verb: Verb, more: Parameters<typeof restChat>[2] = {}): Promise<RestAnswer> {
   const back = verb === 'unsettle' && (more?.snoozeUntil ?? 0) > Date.now() ? more!.snoozeUntil! : 0
-  markRest(chat, back ? restMark('snooze', back) : restMark(verb))
+  const asked = back ? restMark('snooze', back) : restMark(verb)
+  markRest(chat, asked)
   try {
     const r = await restChat(chat, verb, more)
-    if (r?.ok === false || r?.error) markRest(chat, null)
-    else if (verb === 'snooze' && r?.until) markRest(chat, restMark(verb, r.until))
+    if (r?.ok === false || r?.error) answerRest(chat, asked, null)
+    else if ((verb === 'snooze' || verb === 'unsettle') && r?.until) answerRest(chat, asked, restMark('snooze', r.until, asked.at))
     return r
   } catch (e) {
-    markRest(chat, null)
+    answerRest(chat, asked, null)
     throw e
   }
 }

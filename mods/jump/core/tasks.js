@@ -122,6 +122,29 @@ export function place(list, task, opts = {}) {
   return { ...p, rest: r?.rest ?? null, restInfo: r };
 }
 
+// A task's status in short (Jump's rows, mods/jump; the whole rules: place()): settled or snoozed by hand first, a
+// stopped or queued task settled with no live agent too (ASH-14 keptSettle); then To do, Queued, Scheduled, Done as
+// stored; a problem nobody is on or a question, Needs you; at work, Working; Ready or Merging; just started, Working;
+// else Needs you. live: its live agents ([{ address, status, turn, role, settled, snoozed }]).
+export function briefStatus(task, live = [], now = Date.now()) {
+  const st = task.state;
+  const own = st === "running" || st === "ready" ? live : [];
+  const rest = st === "done" ? null : taskRest(task, own, [], now)?.rest;
+  if (rest) return rest;
+  if (["todo", "queued", "scheduled", "done"].includes(st)) return st;
+  // A problem (failing checks) its agent is on (onIt()): Working; nobody on it: Needs you.
+  const fixing = task.attention && onIt(task, own, now);
+  if ((task.attention && !fixing) || own.some((a) => a.status === "blocked")) return "needs";
+  if (fixing) return "working";
+  // Back at work after it said ready (busyAgain()): Working.
+  if (st === "ready" && !busyAgain(task, own, now)) return task.merge_requested && own.length ? "merging" : "ready";
+  if (own.some((a) => a.status === "working")) return "working";
+  const last = task.agents?.[task.agents.length - 1];
+  const started = Math.max(0, ...[task.started, last?.at].filter((x) => typeof x === "number"));
+  if (!last?.ended && now - started < STARTING_MS) return "working";
+  return "needs";
+}
+
 function placeOf(list, task, { live = [], helpers = [], loaded = true, now = Date.now() } = {}) {
   const st = task.state;
   if (!(st === "running" || st === "ready")) live = [];

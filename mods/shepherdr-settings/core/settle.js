@@ -122,7 +122,8 @@ export const taskCan = (section, live = []) => ({ settle: section !== "done", sn
 // ---- at once (ASH-14) ---------------------------------------------------------------------------------------------
 // A row put away (or back) moves the moment it's asked, not when herdr-task's labels or the task's file come back: the
 // asker keeps a mark { rest: "settled" | "snoozed" | null, until?, at } by the row's key (restKey) for PENDING_MS at most,
-// and the views show it until what they read agrees (shownRest). A refusal drops it.
+// and the views show it until what they read agrees (shownRest). A refusal drops it. An answer only touches the mark its
+// own request set (marksAfter): a later action on the same row wins over an earlier one's late answer.
 export const PENDING_MS = 20000;
 // the window's marks, in its shared state (lib/rest.js writes them; the sidebar and the Tasks panel read them)
 export const PENDING = "tasks.restnow";
@@ -131,19 +132,34 @@ export function marksWith(marks, key, mark, now = Date.now()) {
   const out = Object.fromEntries(Object.entries(marks ?? {}).filter(([k, m]) => k !== key && now - (m?.at ?? 0) <= PENDING_MS));
   return mark ? { ...out, [key]: mark } : out;
 }
+// The marks after an answer to the request that set `asked`: its mark replaced (mark) or dropped (null), unless a newer
+// request on that row has set its own meanwhile; then they stay as they are.
+export function marksAfter(marks, key, asked, mark, now = Date.now()) {
+  return (marks ?? {})[key]?.at === asked?.at ? marksWith(marks, key, mark, now) : marks ?? {};
+}
 // a row's key for its mark: a task (its machine, folder and id) or an agent (its address)
 export const restKey = (x) => (x?.ref ? `task:${x.machine ?? ""}:${x.folder ?? ""}:${x.ref}` : `agent:${x?.agent ?? ""}`);
 // the mark for a verb asked now: settle, unsettle, snooze (its wake time, when known), wake
 export const restMark = (verb, until = null, at = Date.now()) => ({ rest: verb === "settle" ? SETTLED : verb === "snooze" ? SNOOZED : null,
   ...(verb === "snooze" && until ? { until } : {}), at });
-// -> { info: the rest to show, keep: whether the mark still counts }. info as taskRest's.
+// -> { info: the rest to show, keep: whether the mark still counts }. info as taskRest's. What's read agrees with the
+// mark once it has the same rest and, for a snooze, the same wake time (a snooze moved to another time keeps the mark
+// until the new time is read); for a mark of none (Unsettle, Wake), once no snooze is set either (a snooze showing
+// because it needs you still has one).
+const agrees = (info, mark) => (info?.rest ?? null) === mark.rest
+  && (mark.rest === SNOOZED ? !mark.until || info?.until === mark.until : mark.rest === null ? !info?.until : true);
 export function shownRest(info, mark, now = Date.now()) {
   if (!mark || now - (mark.at ?? 0) > PENDING_MS) return { info, keep: false };
-  if ((info?.rest ?? null) === mark.rest) return { info, keep: false };
+  if (agrees(info, mark)) return { info, keep: false };
   if (mark.rest === SETTLED) return { info: { rest: SETTLED, at: mark.at }, keep: true };
   if (mark.rest === SNOOZED) return { info: { rest: SNOOZED, until: mark.until ?? null }, keep: true };
   return { info: null, keep: true };
 }
+
+// chat.settle (Ctrl+Shift+S) on what's in view, as it shows now (info: its rest, its mark applied: shownRest): Unsettle
+// once settled; else Settle, unless its agent is at work or asking (word: its status; a task with no live agent: none),
+// whose turn would end the settle at once. -> "settle" | "unsettle" | null.
+export const keyVerb = (info, word = null) => (info?.rest === SETTLED ? "unsettle" : busy(word) ? null : "settle");
 
 // ---- words --------------------------------------------------------------------------------------------------------
 export const REST = {

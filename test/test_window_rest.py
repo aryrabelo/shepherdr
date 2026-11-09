@@ -23,7 +23,10 @@ HARNESS = r"""
 const calls = [], toasts = [], store = {};
 const answers = { settle: { ok: true, settled: ["t1"], at: 1, was_snoozed: { t1: Date.now() + 3600000 } },
   unsettle: { ok: true }, snooze: { ok: true, until: 2, when: "Tomorrow 9:00" }, wake: { ok: true } };
+// gates[verb]: a promise that herdr-task's answer waits on (a slow call)
+const gates = {};
 const exec = async (cmd, args) => { calls.push(args); const verb = args.find((a) => answers[a]);
+  if (gates[verb]) await gates[verb];
   if (answers[verb] === "refuse") return { code: 1, stdout: JSON.stringify({ error: "No." }) };
   return { code: 0, stdout: JSON.stringify(answers[verb]) }; };
 const appHome = () => "/app";
@@ -48,6 +51,9 @@ out.toast = toasts[0];
 // the row moved at once (ASH-14): a settled mark by its key, before and after herdr-task answered
 out.markAfterSettle = store["tasks.restnow"]?.["task:vm:/w:HERD-3"]?.rest ?? null;
 undoRest(Number(toasts[0].action.name.split("undo-rest-")[1]));
+// ASH-14 review: the undo put the snooze the settle ended back: snoozed until then at once, not awake
+out.markOnUndo = store["tasks.restnow"]?.["task:vm:/w:HERD-3"] ?? null;
+out.wasSnoozed = answers.settle.was_snoozed.t1;
 await tick();
 out.pinsAfterUndo = store["tasks.pinned"];
 out.calls = calls;
@@ -59,6 +65,17 @@ undoRest(Number(toasts[1].action.name.split("undo-rest-")[1]));
 await tick();
 out.lastCall = calls[calls.length - 1];
 out.markAfterSnoozeUndo = "agent:t7" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t7"].rest : "none";
+// ASH-14 review: a slow Snooze answering after a Wake on the same row leaves the Wake's mark (awake) alone
+let open;
+gates.snooze = new Promise((r) => { open = r; });
+const slow = snooze({ agent: "t8" }, "t8", { in: "1h", label: "In 1 hour" });
+await tick();
+await wake({ agent: "t8" }, "t8");
+open();
+await slow;
+await tick();
+out.markAfterLateSnooze = "agent:t8" in (store["tasks.restnow"] ?? {}) ? store["tasks.restnow"]["agent:t8"].rest : "none";
+delete gates.snooze;
 // a refusal takes the mark back
 answers.settle = "refuse";
 await settle({ agent: "t9" }, "t9").catch(() => {});
@@ -69,15 +86,19 @@ console.log(JSON.stringify(out));
 
 
 class WindowRest(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("node"), "node isn't installed")
-    def test_rest_runs_herdr_task_and_undoes(self):
+    def run_harness(self):
+        if not shutil.which("node"):
+            self.skipTest("node isn't installed")
         src = read("lib", "rest.js")
         src = re.sub(r'^import .*?;\n', "", src, flags=re.M | re.S)
-        core = f'import {{ PENDING, restKey, restMark, marksWith }} from "file://{J("core", "settle.js")}";'
+        core = f'import {{ PENDING, restKey, restMark, marksWith, marksAfter }} from "file://{J("core", "settle.js")}";'
         script = HARNESS.replace("CORE", core).replace("SOURCE", src)
         r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = json.loads(r.stdout)
+        return json.loads(r.stdout)
+
+    def test_rest_runs_herdr_task_and_undoes(self):
+        out = self.run_harness()
         # another machine's agent goes by its own address there, through --on
         self.assertEqual(out["agentHere"], {"machine": None, "args": ["--agent", "t7"]})
         self.assertEqual(out["agentThere"], {"machine": "vm", "args": ["--agent", "t7"]})
@@ -102,6 +123,13 @@ class WindowRest(unittest.TestCase):
         self.assertIsNone(out["markAfterSnoozeUndo"])
         self.assertFalse(out["markAfterRefusal"])
 
+    def test_review_undo_snooze_back_and_late_answers(self):
+        """ASH-14 review (items 4 and 7): undoing a settle that ended a snooze marks the row snoozed until then at
+        once, never awake; a slow Snooze's answer after a Wake on the same row leaves the Wake's mark alone."""
+        out = self.run_harness()
+        self.assertEqual((out["markOnUndo"]["rest"], out["markOnUndo"]["until"]), ("snoozed", out["wasSnoozed"]))
+        self.assertIsNone(out["markAfterLateSnooze"])
+
     def test_window_wiring(self):
         """Every surface goes through rest.js and core's lists; what counts as news leaves rest out."""
         menu = read("mods", "tasks-menu", "main.js")
@@ -113,6 +141,13 @@ class WindowRest(unittest.TestCase):
         chat = read("mods", "chat", "main.js")
         for n in ('c === "settle"', "settleKey", "wakeSeen", "notNews"):
             self.assertIn(n, chat)
+        # ASH-14 review (item 1): the key reaches a task's thread with no live agent (its kept settle, from its list's
+        # file) and what shows now (its row's mark): core keyVerb, never only a live terminal's labels
+        key = chat[chat.index("  settleKey() {"):]
+        key = key[:key.index("\n  }\n")]
+        for n in ("keyVerb(shownRest(", "keptSettle(t)", "if (!k && !task) return;", ".herdr/tasks/${key.slug}.json"):
+            self.assertIn(n, key)
+        self.assertNotIn("if (!k) return;", key)
         self.assertIn('c.startsWith("undo-rest-")', read("mods", "tabs-tasks", "main.js"))
         tasks = read("mods", "tasks", "main.js")
         for n in ("REST.snoozed", "REST.settled", '"settled:open"', "openRowMenu(pin)", "taskCan("):
@@ -127,7 +162,7 @@ class WindowRest(unittest.TestCase):
             self.assertIn(n, sidebar)
         self.assertIn("notNews", read("lib", "inbox.js"))
         self.assertIn("notNews", read("lib", "parked.js"))
-        self.assertIn("taskRest", read("mods", "jump", "main.js"))
+        self.assertIn("briefStatus(task, live)", read("mods", "jump", "main.js"))
         copies = read("lib", "COPIES")
         self.assertRegex(copies, r"(?m)^rest\.js: .*\btabs-tasks\b")
         # the key: Ctrl+Shift+S in a chat, named, in the Tasks add-on; Cmd+Shift+S stays herdr-t3-inbox's
