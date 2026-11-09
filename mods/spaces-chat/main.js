@@ -874,8 +874,10 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
+    const voice = this.voiceRow(t, collapsed);
+    const strip = collapsed ? null : this.outStrip(t);
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(this.voiceRow(t, collapsed))
+      .when(Boolean(voice), (el) => el.child(voice))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(TEXT.label).font_medium().text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
         // As a machine's +: New space, New section, on the shown space's machine.
@@ -887,7 +889,7 @@ export default class Spaces extends View {
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => this.release(cx))
         .children(this.grouped(t, collapsed))
-        .when(!collapsed && Boolean(this.outStrip(t)), (el) => el.child(this.outStrip(t))));
+        .when(Boolean(strip), (el) => el.child(strip)));
   }
 
   // While a space shown in a folder is dragged, a place to drop it out of every folder (the mod's dashed strip): with
