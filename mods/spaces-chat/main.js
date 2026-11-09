@@ -887,7 +887,7 @@ export default class Spaces extends View {
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => this.release(cx))
         .children(this.grouped(t, collapsed))
-        .when(!collapsed, (el) => el.child(this.outStrip(t))));
+        .when(!collapsed && Boolean(this.outStrip(t)), (el) => el.child(this.outStrip(t))));
   }
 
   // While a space shown in a folder is dragged, a place to drop it out of every folder (the mod's dashed strip): with
