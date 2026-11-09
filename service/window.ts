@@ -10,8 +10,7 @@ import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 // the switches' words and an add-on's line: core/settings.js, the window's own (mods/shepherdr-settings/layout.js)
 import * as C from "../core/settings.js";
 
-const { SWITCHES: CORE_SWITCHES, ADDONS, SECTIONS, addonAbout, VOICE_FROM } = C as any;
-const FILE = process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json");
+const { SWITCHES: CORE_SWITCHES, ADDONS, SECTIONS, INSIGHTS, addonAbout, VOICE_FROM } = C as any;
 // the repo's lib/addons.json, installed beside the service
 const MANIFEST = join(import.meta.dir, "..", "lib", "addons.json");
 
@@ -48,6 +47,8 @@ export function windowSection(value: (key: string) => unknown): SettingSection {
       group: ADDONS, ...(stop.length ? { disabled: true } : {}) });
     // under the voice add-on (on): whose voice its calls and dictation use
     if (a.id === "voice" && now) rows.push({ label: VOICE_FROM.title, key: "voice.provider", value: voiceWord(), options: VOICE_FROM.choices.map(([, w]: string[]) => w), hint: VOICE_FROM.about, group: ADDONS });
+    // Usage insights: its Delete, right under its switch (service/usage.ts deleteAll)
+    if (a.id === "insights") rows.push({ label: INSIGHTS.title, key: "insights.delete", value: "", button: INSIGHTS.button, hint: INSIGHTS.about, group: ADDONS });
   }
   return { name: SECTIONS.find((s: any) => s.id === "window").title, global: true, rows };
 }
