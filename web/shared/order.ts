@@ -165,3 +165,19 @@ export function moveSpace(order: PlaceOrder, defs: SectionDefs, places: Place[],
   if (!to.startsWith('m:')) order[to] = put(order[to] ?? [])
   else if (before && m) order[m.id] = put(machineSpaces(places, m, order).map((x) => x.id).filter((x) => x !== id))
 }
+
+/** a space moved into a list (`to`: a section's, PINNED, a machine's own m:<id> or a space folder's f:<id>), before
+ *  another there or last: the lists it changes, the `before` the move keeps, and whether the new list compares loosely
+ *  (a machine's own and a folder's keep Herdr's order, so only who is in them counts). A folder's spaces have no order
+ *  of their own (ASH-15): a drop among them goes in last, never before one, so it doesn't show there and jump back. */
+export function moveIn(lists: PlaceOrder, id: string, to: string, before: string | undefined, isGroup: (k: string) => boolean) {
+  if (to.startsWith('f:')) before = undefined
+  const from = Object.keys(lists).find((k) => isGroup(k) && lists[k].includes(id))
+  if (from === to && !before) return null
+  const next: PlaceOrder = {}
+  if (from) next[from] = lists[from].filter((x) => x !== id)
+  const there = (next[to] ?? lists[to] ?? []).filter((x) => x !== id)
+  const i = before ? there.indexOf(before) : -1
+  next[to] = i < 0 ? [...there, id] : [...there.slice(0, i), id, ...there.slice(i)]
+  return { next, before, loose: (to.startsWith('m:') || to.startsWith('f:')) && !before }
+}

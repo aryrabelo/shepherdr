@@ -1374,8 +1374,8 @@ export type Action =
   | { type: 'section'; op: 'delete'; id: string }
   /** the last section deleted, back in its place (its toast's Undo, as the window's) */
   | { type: 'section'; op: 'restore' }
-  /** ASH-15: a space folder (f:<id>) folded or opened, in its file */
-  | { type: 'folder'; op: 'fold'; id: string }
+  /** ASH-15: a space folder (f:<id>) folded or opened (`folded`: the state it was tapped to), in its file */
+  | { type: 'folder'; op: 'fold'; id: string; folded: boolean }
   /** a machine's or space's name as it shows everywhere ('' gives it back its own); kept by the main machine (id,
       not place: never sent on to another), and nothing else changes: its folder, repo, herdr space and task ids stay */
   /** a machine's or section's emoji too: '' takes it away, none leaves it */

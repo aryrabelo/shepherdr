@@ -325,8 +325,19 @@ export class Model {
     this.live.put("spaces", { spaces, sections: bar.sections });
     // each list's automations (herdr-task auto), with the folder and machine they belong to, for 3.0's Automations group
     const automations = lists.flatMap((l: any) => (Array.isArray(l.automations) ? l.automations : []).map((a: any) => ({ ...a, folder: l.folder, machine: l.machine ?? null, list: l.name })));
-    // ASH-15: this machine's spaces in the person's folders (not pinned, in no section)
-    const folders = folderGroups(this.folders.data, spaces);
+    // ASH-15: this machine's spaces in the person's folders (not pinned, in no section), from where each works now: its
+    // first terminal's live folder (the mod's place()), else where it was made
+    const placeOf = (s: any) => {
+      for (const a of (s.tabs ?? []).flatMap((t: any) => t.terminals ?? [])) {
+        const k = this.hub.terminals.get(a) as any, cwd = k?.foreground?.cwd ?? k?.cwd;
+        if (cwd) return String(cwd);
+      }
+      return s.folder ?? "";
+    };
+    const placed = spaces.filter((s: any) => !s.machine).map((s: any) => ({ ...s, place: placeOf(s) }));
+    const { groups: folders, shown } = folderGroups(this.folders.data, placed);
+    this.folders.shown = shown;
+    this.folders.places = new Map(placed.map((s: any) => [s.id, s.place]));
     this.onBuild?.({ spaces, sections: bar.sections, folders, rows, machines: this.machines, known: this.known, automations });
   }
 }
