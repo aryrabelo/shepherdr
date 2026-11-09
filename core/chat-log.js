@@ -35,11 +35,12 @@ for p in "$pid" $(kids "$pid"); do
       # its own session file (a subagent's is one folder deeper), else the one its lock names
       f=$(printf '%s\\n' "$fs" | grep -E '/agent/sessions/[^/]+/[^/]*_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jsonl$' | head -1)
       [ -n "$f" ] && { echo "$f"; exit 0; }
-      l=$(printf '%s\\n' "$fs" | grep -E '/run/session-owners/[0-9a-f-]{36}\\.lock$' | head -1)
-      if [ -n "$l" ]; then
+      # every lock it holds, in turn: a subagent's (its log one folder deeper, never matched here) may come first
+      f=$(printf '%s\\n' "$fs" | grep -E '/run/session-owners/[0-9a-f-]{36}\\.lock$' | while IFS= read -r l; do
         id=$(basename "$l" .lock)
-        for f in "\${l%/run/session-owners/*}"/agent/sessions/*/*_"$id".jsonl; do [ -f "$f" ] && { echo "$f"; exit 0; }; done
-      fi
+        for g in "\${l%/run/session-owners/*}"/agent/sessions/*/*_"$id".jsonl; do [ -f "$g" ] && { echo "$g"; exit 0; }; done
+      done)
+      [ -n "$f" ] && { echo "$f"; exit 0; }
     else
       f=$(printf '%s\\n' "$fs" | grep '/rollout-.*\\.jsonl$' | head -1)
       [ -n "$f" ] && { echo "$f"; exit 0; }
@@ -641,11 +642,40 @@ export function ompStep(name, a = {}, intent = "") {
   return { kind: "tool", line: `Used ${name}`, doing: why || `Using ${name}` };
 }
 
-// omp's ask tool in words, as Codex's questions show: each question, then its options ("- label").
+// omp's ask tool in words, as Codex's questions show: each question, then its options ("- label"). Two shapes: up to
+// omp 18.18.2 `questions: [{ question, options: [{ label }] }]`; from 18.18.3 one HTML form (`html`: a <fieldset> per
+// question, its <legend> the question, a <label> or <option> per choice). -> { text, options } (options: every
+// choice's words, to tell an option picked from words typed: ompAnswer()).
+const htmlText = (s) => unattr(String(s).replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&#39;/g, "'")).replace(/\s+/g, " ").trim();
 function ompAsk(a) {
+  if (typeof a?.html === "string") {
+    const blocks = [], options = [];
+    for (const m of a.html.matchAll(/<(legend|label|option)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)) {
+      const t = htmlText(m[2]);
+      if (!t) continue;
+      if (m[1].toLowerCase() === "legend" || !blocks.length) blocks.push(m[1].toLowerCase() === "legend" ? [t] : [`- ${t}`]);
+      else blocks[blocks.length - 1].push(`- ${t}`);
+      if (m[1].toLowerCase() !== "legend") options.push(t);
+    }
+    // a choice's value counts as picked too (an answer may name it so)
+    for (const m of a.html.matchAll(/<(?:input|option)\b[^>]*\bvalue="([^"]*)"/gi)) options.push(unattr(m[1]));
+    return { text: blocks.map((b) => b.join("\n")).join("\n\n"), options };
+  }
   const qs = Array.isArray(a?.questions) ? a.questions : a?.question ? [a] : [];
-  return qs.map((q) => [q?.question, ...(Array.isArray(q?.options) ? q.options.map((o) => `- ${o?.label ?? o}`) : [])].filter(Boolean).join("\n")).join("\n\n");
+  const label = (o) => String(o?.label ?? o);
+  return { text: qs.map((q) => [q?.question, ...(Array.isArray(q?.options) ? q.options.map((o) => `- ${label(o)}`) : [])].filter(Boolean).join("\n")).join("\n\n"),
+    options: qs.flatMap((q) => (Array.isArray(q?.options) ? q.options.map(label) : [])) };
 }
+
+// The question omp is asking now, while its turn waits on it (an omp chat's last ask not answered yet), else null.
+// omp's ask has no card here: words sent to its terminal meanwhile would land in its list of options, so the chat holds
+// them (ASK_HELD) until it is answered there.
+export function openAsk(conv) {
+  if (conv?.kind !== "omp") return null;
+  const q = [...conv.items].reverse().find((x) => x.kind === "ask");
+  return q && !q.closed ? q : null;
+}
+export const ASK_HELD = "Not sent: omp is asking in its terminal. Answer it there, then send this again.";
 
 // The conversation in one log, built from LOG's records ({ off, kind, data }) in file order.
 // Items (ids come from byte offsets, so they stay the same when earlier pages are added):
@@ -1112,8 +1142,10 @@ export class Conversation {
       if (b?.type !== "toolCall") continue;
       const id = String(b.id ?? `c${off}.${i}`), name = String(b.name ?? ""), a = b.arguments && typeof b.arguments === "object" ? b.arguments : {};
       if (name === "ask") {
-        const text = ompAsk(a);
+        const { text, options } = ompAsk(a);
         if (text) this.asked(id, { kind: "ask", id: `q${off}.${i}`, text });
+        (this.askOptions ??= new Map()).set(id, options);
+        if (this.askOptions.size > 20) this.askOptions.delete(this.askOptions.keys().next().value);
         this.open.set(id, "Asking you something");
         this.doing = "Asking you something";
         continue;
@@ -1127,7 +1159,9 @@ export class Conversation {
       }
     }
     if (m.stopReason === "error" && m.errorMessage) this.push({ kind: "error", id: `e${off}`, text: String(m.errorMessage) });
-    if (m.stopReason === "stop" || m.stopReason === "error" || m.stopReason === "aborted") {
+    // a turn ends: it stopped, failed, was interrupted, or ran out of tokens ("length"); a question it left is gone
+    if (["stop", "error", "aborted", "length"].includes(m.stopReason)) {
+      for (const id of this.open.keys()) { const q = this.questions.get(id); if (q) q.closed ??= "dismissed"; }
       this.open.clear();
       this.waits.clear();
       this.waiting = false;
@@ -1136,13 +1170,25 @@ export class Conversation {
   }
 
   // The answer to omp's ask tool (its toolResult line, whole): the words the person wrote show as their message
-  // (an option picked on its screen is not a message), as Claude Code's answers().
+  // (an option picked on its screen is not a message), as Claude Code's answers(). Up to omp 18.18.2 its details are
+  // { selectedOptions, customInput } (or { results: [those] }); from 18.18.3 { answers: [{ name, question, answer }] },
+  // `answer` the picked options' words (several joined by ", ") or the words typed.
   ompAnswer(m, off, at) {
-    const q = this.questions.get(String(m.toolCallId ?? ""));
+    const id = String(m.toolCallId ?? "");
+    const q = this.questions.get(id);
     const d = m.details && typeof m.details === "object" ? m.details : {};
-    const rs = Array.isArray(d.results) ? d.results : [d];
-    const said = rs.map((r) => String(r?.customInput ?? "").trim()).filter(Boolean);
-    const picked = rs.some((r) => (Array.isArray(r?.selectedOptions) && r.selectedOptions.length) || r?.customInput);
+    let said, picked;
+    if (Array.isArray(d.answers)) {
+      // longest first, so an option holding another's words ("OAuth (Google, GitHub)") goes whole
+      const opts = [...(this.askOptions?.get(id) ?? [])].filter(Boolean).sort((x, y) => y.length - x.length);
+      const words = d.answers.map((r) => String(r?.answer ?? "").trim()).filter(Boolean);
+      picked = words.length > 0;
+      said = words.filter((w) => opts.reduce((rest, o) => rest.split(o).join(" "), w).replace(/[\s,]+/g, "") !== "");
+    } else {
+      const rs = Array.isArray(d.results) ? d.results : [d];
+      said = rs.map((r) => String(r?.customInput ?? "").trim()).filter(Boolean);
+      picked = rs.some((r) => (Array.isArray(r?.selectedOptions) && r.selectedOptions.length) || r?.customInput);
+    }
     if (q) q.closed = picked ? "answered" : "dismissed";
     if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
   }

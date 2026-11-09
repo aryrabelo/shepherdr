@@ -30,7 +30,7 @@ import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHa
 import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
 import * as fs from "fs/promises";
-import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine, openAsk, ASK_HELD } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
 import { ChatReader, KINDS } from "./core/chat-reader.js";
 import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
@@ -1391,6 +1391,9 @@ export default class Chat extends View {
       paths: msg.files.filter((f) => f.image).map((f) => f.path), at: Date.now(), sent: body,
       match: norm(msg.text).slice(0, 60) || null, msg };
     this.pending.push(p);
+    // omp asks in its terminal (no card here): words typed there would land in its list of options. Kept as a bubble
+    // that sends again when pressed, once it's answered (core/chat-log.js openAsk).
+    if (openAsk(this.conv)) { p.failed = ASK_HELD; cx.notify(); return; }
     const menu = msg.files.length ? null : slash.opensMenu(this.kind, msg.text);
     if (menu) this.note = { id: `note-${msg.id}`, text: `/${menu} opens a menu in the terminal. Switching to it.` };
     cx.spawn(async (cx) => {
@@ -2624,7 +2627,7 @@ export default class Chat extends View {
           at: at ? { x: Math.max(8, at.x - W + 90), y: Math.max(8, at.y - H - 10) } : "pointer",
           props: { pane: this.pickKey(), offline, width: W, height: H, select: name ? findModel(menus, name) : null,
             current: { agent: c.agent, model: currentRow, effort: c.effort ?? null, fast: c.fast, perm: c.perm ?? null },
-            menus, icons, permDefault: agent.rolePerms(this.role, { ...agent.PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }) } });
+            menus, icons, permDefault: agent.rolePerms(this.role === "coordinator" || assistant(this.t) ? "coordinator" : "worker", { ...agent.PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }) } });
       } finally {
         this.picking = false;
         cx.notify();

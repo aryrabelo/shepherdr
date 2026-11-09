@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sendBody, steerNow, messageBody, refusal, reactionLine, mentionedIn, taskTag } from "../core/send.js";
 import { kindOf } from "../core/chat-reader.js";
+import { openAsk, ASK_HELD } from "../core/chat-log.js";
 import { WORDS, rewinds } from "../core/chat-view.js";
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
@@ -46,6 +47,8 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
   if (!text && !(Array.isArray(b.attachments) && b.attachments.length)) throw new Error("nothing to send");
   const t = hub.terminals.get(a);
   if (!t || t.state !== "live") throw new Error("That agent isn't running.");
+  // omp asks in its terminal (no card): words typed there would land in its list of options (core/chat-log.js openAsk)
+  if (openAsk(compat.reader?.(a)?.conv)) throw new Error(ASK_HELD);
   const io = { hc: asPerson(hub), sleep: (ms: number) => Bun.sleep(ms), status: () => (hub.terminals.get(a) as any)?.status?.state ?? null };
   // files sent with it: their paths after the words, as the window's chat sends them (copied first to another machine)
   const sent: string[] = Array.isArray(b.attachments) ? b.attachments : [];

@@ -69,11 +69,14 @@ once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-models.js
   holds, else the log its lock names; one holding neither hasn't started its session yet (an empty chat until its first
   message). So two omp agents in one folder never share a chat. Not `PI_SESSION_FILE` (only its tools' environment has
   it, and `/new` changes the file under the same process) nor the newest file in the folder. Its messages, the commands
-  and calls it runs (one row of steps, its own words for each), its questions (the ask tool, with their options; the
-  words you write there show as your message) and the end of each turn show as Claude Code's and Codex's do, in the
-  window and on the web; the / list has omp's commands.
+  and calls it runs (one row of steps, its own words for each), its questions (the ask tool, with their options: up to
+  omp 18.18.2 its `questions[]`, from 18.18.3 its HTML form's legends and labels; the words you write there show as your
+  message) and the end of each turn (stop, error, interrupted, out of tokens) show as Claude Code's and Codex's do, in
+  the window and on the web; the / list has omp's commands.
 - **What it lacks:** question, permission and plan cards (omp asks in its terminal: the task or Assistant shows Needs
-  you, answer there); Rewind and Fork under its messages (its `/branch` and `/fork` are menus of its own: use its
+  you, answer there; while it asks, what you send from the chat is held, "Not sent", and goes once you press it again
+  after answering: typed into its list of options it would pick one); Rewind and Fork under its messages (its
+  `/branch` and `/fork` are menus of its own: use its
   terminal); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so;
   a mode set only in omp's own config isn't seen); usage limits and a backup agent taking over; background shells
   above the box.

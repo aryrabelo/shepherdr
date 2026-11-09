@@ -20,7 +20,7 @@ import shlex
 from .base import HOME, hc_json, now, run, SHELLS
 from .agents import agent_running, status_word
 from .sessions import session_of
-from .settings import ASSISTANT_TEMPLATES
+from .settings import ASSISTANT_TEMPLATES, WRAPPERS
 from .launch import CLEAN_ENV
 
 LABEL = "herdr.resume"
@@ -51,7 +51,9 @@ OMP_VALUE = {"--alias", "--model", "--smol", "--slow", "--plan", "--provider", "
 
 
 def kind_of(word):
+    """The CLI a program word runs (claude, codex, omp; a wrapper such as omp-safe as the CLI it runs), else None."""
     b = os.path.basename(str(word))
+    b = WRAPPERS.get(b, b)
     return b if b in ("claude", "codex", "omp") else None
 
 

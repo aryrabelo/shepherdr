@@ -14,6 +14,10 @@ const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvFor, sessionOf, N
 const KEYS: string[] = AGENT_KEYS;
 /** the CLI a terminal runs: the chat's kinds (core/chat-reader.js: claude, codex, omp), or herdr-task's herdr.agent label */
 const cliOf = (t: any): string | null => kindOf(t) ?? (t?.labels?.["herdr.agent"] === "omp" ? "omp" : null);
+/** the role whose permission modes a terminal's agent gets (core/agents.js rolePerms): "coordinator" only for an
+ *  Assistant (its herdr.role label, or the template it started from, as lib/coordinator.js isCoordinator), else a plain
+ *  agent tab's or a task's: "worker" */
+const permRole = (t: any): string => (t?.labels?.["herdr.role"] === "coordinator" || ["assistant", "coordinator"].includes(t?.template) ? "coordinator" : "worker");
 const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
 
 async function run(cmd: string[]) {
@@ -81,7 +85,7 @@ export class Agents {
     const menus = Object.fromEntries(KEYS.filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
     return { current: { agent: kind, model: row, effort: c.effort ?? null, fast: !!c.fast, perm: c.perm ?? null }, menus,
       // an Assistant's own modes when another CLI is picked (core/agents.js rolePerms: Claude Code's Auto)
-      permDefault: rolePerms(t.labels?.["herdr.task"] ? "worker" : "coordinator", { ...PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }),
+      permDefault: rolePerms(permRole(t), { ...PERM_DEFAULT, claude: dflts.claude?.mode ?? "manual" }),
       picks: this.picks(), offline: machine && !(await this.reachable(machine)) ? machine : null };
   }
 
@@ -143,7 +147,7 @@ export class Agents {
     const task = t.labels?.["herdr.task"];
     // no mode picked: the same CLI keeps its own; another CLI starts on its default for the role (one CLI's mode means
     // nothing to another: "manual" isn't an omp --approval-mode)
-    const perm = pick.perm ?? (pick.kind === kind ? current(kind, old.argv, {}, {}).perm : rolePerms(task ? "worker" : "coordinator", PERM_DEFAULT)[pick.kind] ?? null);
+    const perm = pick.perm ?? (pick.kind === kind ? current(kind, old.argv, {}, {}).perm : rolePerms(permRole(t), PERM_DEFAULT)[pick.kind] ?? null);
     const built = argvFor({ agent: pick.kind, model: pick.model, effort: pick.effort, fast: pick.speed === "fast", perm }, old);
     const pane = t.labels?.["herdr.chat"] ?? "";
     if (task) {

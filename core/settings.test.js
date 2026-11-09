@@ -93,9 +93,12 @@ test("a new Assistant starts on Auto (Claude Code) or Full access (omp), workers
   expect(A.argvFor({ agent: "omp", model: "a/b", perm: pd.omp }, { agent: null, argv: [] }).argv).toEqual(["omp", "--model", "a/b", "--approval-mode", "yolo"]);
   // started without a pick (the web, a new space without the window): the template's own command
   expect(read("templates/assistant.md")).toMatch(/^command: claude --permission-mode auto$/m);
-  // the web's restart menu and the window's model menu offer the Assistant's modes too
-  expect(read("service/agents.ts")).toContain('rolePerms(t.labels?.["herdr.task"] ? "worker" : "coordinator"');
-  expect(read("mods/chat/main.js")).toContain("agent.rolePerms(this.role,");
+  // the web's restart menu and the window's model menu offer the Assistant's modes too, only to an Assistant: a plain
+  // agent tab keeps its CLI's own (review 5: herdr.role, as the window's this.role, not "no task label")
+  expect(read("service/agents.ts")).toContain('t?.labels?.["herdr.role"] === "coordinator"');
+  expect(read("service/agents.ts")).not.toContain('herdr.task"] ? "worker" : "coordinator"');
+  expect(read("service/agents.ts").match(/rolePerms\(permRole\(t\)/g)?.length).toBe(2);
+  expect(read("mods/chat/main.js")).toContain('agent.rolePerms(this.role === "coordinator" || assistant(this.t) ? "coordinator" : "worker",');
 });
 
 test("Backup's warning, an add-on's line and Web's state, in the window's words", () => {
