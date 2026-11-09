@@ -137,7 +137,7 @@ export const WEB_KEYS = {
     "ctrl-,": "app.settings",
   },
   "mod:chat": { "ctrl-shift-d": "chat.dictate", "ctrl-shift-space": "chat.call", "ctrl-f": "chat.find", "ctrl-shift-s": "chat.settle" },
-  "layout:shepherdr": { "shift-f2": "tabs-tasks.rename-space" },
+  "layout:ary-shepherdr": { "shift-f2": "tabs-tasks.rename-space" },
 };
 
 // keys.json's sections as the list grouped() takes: { section: { keys: action } } -> [{ section, keys, action }].

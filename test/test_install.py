@@ -62,13 +62,13 @@ class Install(unittest.TestCase):
         rec = json.load(open(self.p(APP, "data/shepherdr/installed.json")))
         self.assertEqual(rec["version"], "3.1.20")
         self.assertTrue(os.path.isfile(self.p(APP, "mods/tasks/bin/herdr-task")))
-        self.assertTrue(os.path.isfile(self.p(APP, "layouts/shepherdr.json")))
+        self.assertTrue(os.path.isfile(self.p(APP, "layouts/ary-shepherdr.json")))
         self.assertEqual(os.path.realpath(self.p(".local/bin/herdr-task")), os.path.realpath(self.p(APP, "mods/tasks/bin/herdr-task")))
         # A key the person uses is kept (no terminal to ask in); free ones are added.
         keys = json.load(open(self.p(APP, "keys.json")))
         self.assertEqual(keys["global"]["ctrl-k"], "mine.open")
         self.assertEqual(keys["global"]["alt-1"], "space.select:1")
-        self.assertEqual(keys["layout:shepherdr"]["f2"], "tabs-tasks.rename-tab")
+        self.assertEqual(keys["layout:ary-shepherdr"]["f2"], "tabs-tasks.rename-tab")
         hooks = json.load(open(self.p(".claude/settings.json")))
         self.assertEqual(hooks["model"], "x")
         self.assertIn("ask-hook.sh", json.dumps(hooks["hooks"]["PermissionRequest"]))
@@ -117,6 +117,64 @@ class Install(unittest.TestCase):
             else:
                 self.assertEqual(after[k], v, k)
         self.assertFalse(os.path.lexists(self.p(".local/bin/herdr-task")))
+
+    def test_layout_renamed_from_shepherdr(self):
+        """An install over the layout's old name (shepherdr): one layout left, ary-shepherdr, with its saved
+        state, the person's keys and the open layout carried over, backed up; a second run changes nothing."""
+        src = tempfile.mkdtemp(prefix="shepherdr-src-")
+        try:
+            old = os.path.join(src, "s")
+            shutil.copytree(ROOT, old, ignore=shutil.ignore_patterns(".git", "node_modules"))
+            os.rename(os.path.join(old, "layouts/ary-shepherdr.json"), os.path.join(old, "layouts/shepherdr.json"))
+            for rel in ("keys.json", "lib/addons.json"):
+                f = os.path.join(old, rel)
+                text = open(f).read().replace("layout:ary-shepherdr", "layout:shepherdr").replace('"ary-shepherdr"', '"shepherdr"')
+                open(f, "w").write(text)
+            run("install", "--root", self.root, "--yes", "--source", old)
+        finally:
+            shutil.rmtree(src)
+        self.assertTrue(os.path.isfile(self.p(APP, "layouts/shepherdr.json")))
+        os.makedirs(self.p(APP, "layouts/.state"))
+        for name in ("shepherdr", "ary"):
+            with open(self.p(APP, f"layouts/.state/{name}.json"), "w") as f:
+                json.dump({"sizes": name}, f)
+        with open(self.p(APP, "layouts/ary.json"), "w") as f:
+            f.write('{"theirs": true}\n')
+        keys = json.load(open(self.p(APP, "keys.json")))
+        theirs = dict(keys["layout:shepherdr"], **{"ctrl-alt-x": "mine.thing", "f2": "mine.rename"})
+        keys["layout:shepherdr"] = theirs
+        keys["layout:ary"] = {"ctrl-1": "ary.one"}
+        with open(self.p(APP, "keys.json"), "w") as f:
+            json.dump(keys, f)
+        with open(self.p(APP, "shared.json"), "w") as f:
+            json.dump({"layout": "shepherdr", "sidebar.width": 300}, f)
+
+        out = run("install", "--root", self.root, "--yes").stdout
+        self.assertEqual(sorted(os.listdir(self.p(APP, "layouts"))), [".state", "ary-shepherdr.json", "ary.json"])
+        self.assertEqual(sorted(os.listdir(self.p(APP, "layouts/.state"))), ["ary-shepherdr.json", "ary.json"])
+        self.assertEqual(json.load(open(self.p(APP, "layouts/.state/ary-shepherdr.json"))), {"sizes": "shepherdr"})
+        self.assertEqual(json.load(open(self.p(APP, "layouts/.state/ary.json"))), {"sizes": "ary"})
+        self.assertEqual(open(self.p(APP, "layouts/ary.json")).read(), '{"theirs": true}\n')
+        keys = json.load(open(self.p(APP, "keys.json")))
+        self.assertNotIn("layout:shepherdr", keys)
+        self.assertEqual(keys["layout:ary-shepherdr"], theirs, "every key carried over, the person's own kept")
+        self.assertEqual(keys["layout:ary"], {"ctrl-1": "ary.one"})
+        self.assertEqual(json.load(open(self.p(APP, "shared.json"))), {"layout": "ary-shepherdr", "sidebar.width": 300})
+        backup = re.search(r"backup of what it replaced: (\S+)", out).group(1)
+        for rel in ("layouts/shepherdr.json", "layouts/.state/shepherdr.json", "keys.json", "shared.json"):
+            self.assertTrue(os.path.isfile(os.path.join(backup, APP, rel)), rel)
+        rec = json.load(open(self.p(APP, "data/shepherdr/installed.json")))
+        self.assertNotIn(f"{APP}/layouts/shepherdr.json", rec["files"])
+        self.assertFalse([k for k in rec["keys"] if k.startswith("layout:shepherdr ")])
+        self.assertIn("whole", run("doctor", "--root", self.root).stdout)
+
+        before = tree(self.root)
+        again = run("install", "--root", self.root, "--yes").stdout
+        self.assertRegex(again, r"files: \d+ same\n")
+        self.assertNotIn("backup of what it replaced", again)
+        after = tree(self.root)
+        rec_rel = f"{APP}/data/shepherdr/installed.json"
+        self.assertEqual({k: v for k, v in after.items() if k != rec_rel}, {k: v for k, v in before.items() if k != rec_rel})
 
     def test_service_unit_and_files(self):
         """The service and the shared core land in .local/share/shepherdr; a scratch root gets the unit file only

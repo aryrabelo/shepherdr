@@ -51,7 +51,7 @@ Left to right, on the theme's `canvas` background, no title bar:
 
 ## Built from
 
-- `layouts/shepherdr.json`: root row → `sidebar` column (`brand` workspace-chrome, `spaces` spaces-chat,
+- `layouts/ary-shepherdr.json`: root row → `sidebar` column (`brand` workspace-chrome, `spaces` spaces-chat,
   `sidebar-footer` workspace-chrome-shepherdr `{footer: true}`) and `work` column (`tabs` tabs-tasks, `work-body` row
   of `main` `{tab: "active"}` with the pane-chat header and `panel` column → `panel-body` stack of files, changes,
   `tasks` stack (`tasks-list` tasks; `tasks-thread`: chat `{panel, head}`, then a stack of chat `{panel}`, a terminal

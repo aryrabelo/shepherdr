@@ -21,7 +21,7 @@
 
 What goes where (each under --root, default your home):
   .config/herdr-app/mods/<mod>          the add-ons' mods (lib/addons.json lists them), one swap per mod
-  .config/herdr-app/layouts/shepherdr.json, lib/, core/, bin/
+  .config/herdr-app/layouts/ary-shepherdr.json, lib/, core/, bin/
   .config/herdr-app/keys.json           our keys merged in: free ones added, a key you use asked about first
   .config/herdr-core/templates/*.md     the Assistant's, worker's and reviewer's instructions
   .local/bin/{herdr-task,herdr-artifact,herdr-secret,herdr-browser,shepherdr}   links into the above
@@ -75,6 +75,9 @@ SKIP = {"__pycache__", ".DS_Store"}
 # Layout blocks Herdr's mods point at whatever is shown now (a task's terminal, an opened artifact):
 # compared without them, so a layout in use still counts as unchanged.
 LIVE_BLOCKS = ("tasks-thread-term", "artifacts-view-body")
+# The layout's name (layouts/<name>.json, keys context layout:<name>), and the one it had before: an
+# install over the old one carries the file, its saved state, the person's keys and the open layout over.
+LAYOUT, OLD_LAYOUT = "ary-shepherdr", "shepherdr"
 HOOKS = [  # (file under home, event, entry): the question and permission cards (the "needs" add-on)
     (".claude/settings.json", "SessionStart",
      {"matcher": "^(startup|resume|clear|compact)$", "hooks": [{"type": "command", "command": "sh '{app}/mods/chat/session-note.sh'", "timeout": 10}]}),
@@ -653,6 +656,60 @@ def apply_mod(r, mod, acts, rec, gone):
         os.rename(stage, target)
 
 
+def rename_layout(r, rec):
+    """layouts/shepherdr.json -> layouts/ary-shepherdr.json, with its .state, its keys context and the
+    window's open layout (shared.json "layout"). Backed up first; nothing when already done."""
+    moves = [(f"{APP}/layouts/{OLD_LAYOUT}.json", f"{APP}/layouts/{LAYOUT}.json"),
+             (f"{APP}/layouts/.state/{OLD_LAYOUT}.json", f"{APP}/layouts/.state/{LAYOUT}.json")]
+    files = rec.get("files", {}) if rec else {}
+    for old, new in moves:
+        if not os.path.lexists(r.p(old)) or (old.endswith(f"/layouts/{OLD_LAYOUT}.json") and old not in files):
+            continue  # gone already, or a layout of that name Shepherdr never installed: not ours to move
+        r.notes.append(f"{old} -> {new}" if not os.path.lexists(r.p(new)) else f"{old} removed ({new} is there)")
+        if r.dry:
+            continue
+        if os.path.lexists(r.p(new)):
+            r.backup(old, move=True)
+        else:
+            r.backup(old)
+            os.rename(r.p(old), r.p(new))
+            if old in files:
+                files[new] = files[old]
+        files.pop(old, None)
+    if rec and "keys" in rec:
+        rec["keys"] = {(f"layout:{LAYOUT} " + n.split(" ", 1)[1] if n.startswith(f"layout:{OLD_LAYOUT} ") else n): v
+                       for n, v in rec["keys"].items()}
+    for rel, change, sep in ((f"{APP}/keys.json", _rename_keys, None), (f"{APP}/shared.json", _rename_open, (",", ":"))):
+        text = read(r.p(rel))
+        try:
+            d = json.loads(text) if text else None
+        except ValueError:
+            continue
+        if not isinstance(d, dict) or not change(d):
+            continue
+        r.notes.append(f"{rel}: layout:{OLD_LAYOUT} -> layout:{LAYOUT}" if sep is None else f"{rel}: opens on {LAYOUT}")
+        if not r.dry:
+            r.backup(rel)
+            out = json.dumps(d, indent=2, ensure_ascii=False) + "\n" if sep is None else json.dumps(d, separators=sep, ensure_ascii=False)
+            atomic_write(r.p(rel), out.encode())
+
+
+def _rename_keys(d):
+    """The old context's keys into the new one (the person's, so theirs win a clash). -> changed"""
+    old = d.pop(f"layout:{OLD_LAYOUT}", None)
+    if old is None:
+        return False
+    d[f"layout:{LAYOUT}"] = {**d.get(f"layout:{LAYOUT}", {}), **old}
+    return True
+
+
+def _rename_open(d):
+    if d.get("layout") != OLD_LAYOUT:
+        return False
+    d["layout"] = LAYOUT
+    return True
+
+
 def merge_keys(r, src, rec, mode, yes):
     """Our keys into keys.json: free ones added, ours from before updated, one the person set
     asked about (or by --keys). One write. -> the record's keys."""
@@ -847,6 +904,7 @@ def cmd_install(a, update=False):
         if home:
             raise Stop(f"{r.p(APP)} isn't there: open Herdr once first, so it writes its home")
         r.notes.append(f"{r.p(APP)} didn't exist: made (a scratch root)")
+    rename_layout(r, rec)
     build_web(r, src, home, a)
     manifest, mods, items = source_items(src)
     actions, clashes = plan_files(r, rec, items, a.adopt)
@@ -1155,7 +1213,7 @@ def cmd_doctor(a):
                 compile(read(os.path.join(pkg, f)), os.path.join(pkg, f), "exec")
             except SyntaxError as e:
                 bad.append(f"herdr-task doesn't compile: {e}")
-    for rel in ("layouts/shepherdr.json", "keys.json"):
+    for rel in (f"layouts/{LAYOUT}.json", "keys.json"):
         try:
             json.load(open(r.p(f"{APP}/{rel}")))
         except (OSError, ValueError) as e:
