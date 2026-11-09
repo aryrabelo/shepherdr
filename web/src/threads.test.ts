@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { marksAfter, marksLeft, placeThreads, restMark, settleTarget, withMarks, type RestMarks } from './threads.ts'
+import { marksAfter, marksLeft, placeThreads, restMark, settleFor, settleKeys, threadTabShown, withMarks, type RestMarks } from './threads.ts'
+import type { Panes } from './panes.ts'
 import type { Place, PlaceTab, Snapshot, Task } from '@shared/types.ts'
 import * as RS from '@core/settle.js'
 
@@ -90,26 +91,50 @@ describe('ASH-14 review', () => {
     expect(withMarks([{ ...t, rest: undefined, restAt: undefined, sub: 'Ready 1m ago' }], { 'S-1/worker': restMark('unsettle', null, NOW) }, NOW + 10)[0].sub).toBe('Ready 1m ago')
   })
 
-  test('Ctrl+Shift+S: a task with no live agent, an agent’s own tab, the Assistant; each as it shows with its mark (item 1)', () => {
-    const stopped = task('S-1', 'needs', { agent: undefined, canSettle: true })
-    const working = task('S-2', 'working', { canSettle: true, canRest: true, rest: 'settled', restAt: 5 })
-    const agentTab = tab('t:t7', 'idle', { rest: 'settled', restAt: 9 })
-    const p = { ...place([agentTab]), assistantTab: { live: true } } as unknown as Place
-    const snap = { tasks: [stopped, working, task('S-3', 'done', { canSettle: false })], places: [p] } as unknown as Snapshot
-    // the task open with no agent at all: the key falls back to its space's chat, the task is what's settled
-    expect(settleTarget(snap, 'p:sp1', 'S-1')).toMatchObject({ chat: 'S-1/Agent', task: stopped })
-    expect(settleTarget(snap, 'S-2/worker', null)).toMatchObject({ chat: 'S-2/worker', rest: 'settled' })
-    // marked a moment ago (Unsettle): it shows awake, so the key settles it again
-    expect(settleTarget(snap, 'S-2/worker', null, { 'S-2/worker': restMark('unsettle', null, NOW) }, NOW + 10)?.rest).toBeUndefined()
-    expect(settleTarget(snap, 't:t7', null)).toMatchObject({ chat: 't:t7', rest: 'settled', tab: agentTab })
-    expect(settleTarget(snap, 'p:sp1', null)).toMatchObject({ chat: 'p:sp1', place: p })
-    expect(settleTarget(snap, 'S-3/worker', null)).toBeNull()
+  // the screen's UI state as the keys read it (kernel UI's fields settleKeys takes)
+  const ui = (more: Partial<{ device: string; split: Panes; task: string | null; term: string | null; place: string }> = {}) =>
+    ({ device: 'desktop', split: { panes: [], pane: 0, sizes: [] } as Panes, task: null, term: null, place: 'sp1', ...more })
+  const agentTab = tab('t:t7', 'idle', { rest: 'settled', restAt: 9 })
+  const shell = { name: 'zsh', term: 't:t3' } as PlaceTab
+  const p = { ...place([agentTab, shell]), assistantTab: { live: true } } as unknown as Place
+  const p2 = { id: 'sp2', name: 'other', chat: 'p:sp2', assistantTab: { live: true } } as unknown as Place
+  const stopped = task('S-1', 'needs', { agent: undefined, canSettle: true })
+  const working = task('S-2', 'working', { canSettle: true, canRest: true, rest: 'settled', restAt: 5 })
+  const snap = { tasks: [stopped, working, task('S-3', 'done', { canSettle: false })], places: [p, p2] } as unknown as Snapshot
+
+  test('Ctrl+Shift+S after an agent thread’s click: that agent, never the space’s Assistant (recheck item 1)', () => {
+    // the thread row as the sidebar has it, and what its click leaves (kernel goPlace: its space, no open task; then its tab)
+    const row = placeThreads(snap, p, {}, NOW).settled.find((x) => x.tab)!
+    const after = ui({ place: p.id, task: null, ...threadTabShown(row.tab!) })
+    expect(settleFor(snap, settleKeys(after), {}, NOW)).toMatchObject({ chat: 't:t7', rest: 'settled', tab: agentTab })
+    // the same in split view, its space the focused pane
+    const split = ui({ place: p.id, ...threadTabShown(row.tab!), split: { panes: [{ kind: 'place', id: 'sp1' }, { kind: 'place', id: 'sp2' }], pane: 0, sizes: [0.5, 0.5] } })
+    expect(settleFor(snap, settleKeys(split), {}, NOW)?.chat).toBe('t:t7')
+    // its mark (Unsettle a moment ago): it shows awake, so the key settles it again
+    expect(settleFor(snap, settleKeys(after), { 't:t7': restMark('unsettle', null, NOW) }, NOW + 10)).toMatchObject({ chat: 't:t7', rest: undefined })
+    // a shell's tab shown: nothing to settle; no tab of this space: its Assistant
+    expect(settleFor(snap, settleKeys(ui({ term: 't:t3' })), {}, NOW)).toBeNull()
+    expect(settleFor(snap, settleKeys(ui()), {}, NOW)).toMatchObject({ chat: 'p:sp1', place: p })
+  })
+
+  test('Ctrl+Shift+S on the open task, with no agent too; a focused pane wins over it (recheck item 2)', () => {
+    expect(settleFor(snap, settleKeys(ui({ task: 'S-1' })), {}, NOW)).toMatchObject({ chat: 'S-1/Agent', task: stopped })
+    expect(settleFor(snap, settleKeys(ui({ task: 'S-2' })), {}, NOW)).toMatchObject({ chat: 'S-2/worker', rest: 'settled' })
+    expect(settleFor(snap, settleKeys(ui({ task: 'S-3' })), {}, NOW)).toBeNull()
+    // split, a space's pane focused while a task is open on the right: that space's Assistant, not the task
+    const panes = { panes: [{ kind: 'place' as const, id: 'sp1' }, { kind: 'place' as const, id: 'sp2' }], pane: 1, sizes: [0.5, 0.5] }
+    expect(settleFor(snap, settleKeys(ui({ task: 'S-1', split: panes })), {}, NOW)).toMatchObject({ chat: 'p:sp2', place: p2 })
+    // the open task on the right has the focus (pane -1): the task; a task's own pane: that task
+    expect(settleFor(snap, settleKeys(ui({ task: 'S-1', split: { ...panes, pane: -1 } })), {}, NOW)?.chat).toBe('S-1/Agent')
+    expect(settleFor(snap, settleKeys(ui({ split: { panes: [{ kind: 'task', id: 'S-2' }], pane: 0, sizes: [1] } })), {}, NOW)?.chat).toBe('S-2/worker')
+    // a phone has no panes: the open task
+    expect(settleFor(snap, settleKeys(ui({ device: 'phone', task: 'S-1', split: panes })), {}, NOW)?.chat).toBe('S-1/Agent')
   })
 
   test('a late answer leaves a newer action’s mark alone (item 7)', () => {
     const slow = restMark('snooze', null, NOW), wake = restMark('wake', null, NOW + 5)
     const marks: RestMarks = { 't:t7': wake }
-    expect(marksAfter(marks, 't:t7', slow, restMark('snooze', NOW + 3600_000, slow.at))).toBe(marks)
+    expect(marksAfter(marks, 't:t7', slow, restMark('snooze', NOW + 3600_000, undefined, slow))).toBe(marks)
     expect(marksAfter(marks, 't:t7', wake, null)).toEqual({})
   })
 })

@@ -4,7 +4,7 @@ import { Search } from './search.tsx'
 // for itself (Ctrl+Tab, Ctrl+1–9, Ctrl+Shift+N, T, W) stay the window's. Ctrl+K jumps.
 import { useState, useSyncExternalStore } from 'react'
 import { closeArtifact, definePlugin, getState, has, keysChat, setUI, togglePlaces, type UI } from '@client/kernel.ts'
-import { settleTarget } from '@client/threads.ts'
+import { settleFor, settleKeys } from '@client/threads.ts'
 import { toggleDictation } from '@plugins/chat/client.tsx'
 import { openFind } from '@plugins/chat/find.tsx'
 import { toggleCall } from '@plugins/voice/client.tsx'
@@ -136,12 +136,13 @@ export default definePlugin({
           openFind(chatNow())
           return true
         }
-        // Ctrl+Shift+S (chat.settle, ASH-12): the chat in view settled, or back once it is (the window's key; Cmd+Shift+S
-        // is left to herdr-t3-inbox). ASH-14: a task with no live agent too, an agent's tab of its own, as each shows now
-        // (its mark on this screen: threads.ts settleTarget)
+        // Ctrl+Shift+S (chat.settle, ASH-12): what's in view settled, or back once it is (the window's key; Cmd+Shift+S
+        // is left to herdr-t3-inbox). ASH-14: the focused pane's, the open task's (with no live agent too), the agent's tab
+        // shown in the middle (a thread's click shows it), else the space's Assistant; as each shows now, its mark on this
+        // screen too (threads.ts settleKeys, settleFor)
         if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyS' && has('tasks')) {
           e.preventDefault()
-          const x = settleTarget(snap, chatNow(), ui.task ?? null, getState().restNow)
+          const x = settleFor(snap, settleKeys(ui), getState().restNow)
           const what = x?.task ? taskWho(snap, x.task.id) : x?.tab ? x.tab.name : x?.place ? (TS.assistantWho as (n: string) => string)(x.place.name) : ''
           if (x) void toggleSettle({ chat: x.chat, what, rest: x.rest, restUntil: x.restUntil })
           else toast({ title: (RS.REST as { noAgent: string }).noAgent, level: 'warning' })

@@ -16,7 +16,7 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type Keybo
 import { act, counts, definePlugin, getState, goPlace, has, manyMachines, openSplit, openTask, placeOf, removeSpace, setUI, splitClick, taskChat, useRestNow, useSnap, useUI, type Pane, type UI } from '@client/kernel.ts'
 import { Dialog, RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
 import { AutopilotIcon, BackIcon, BellIcon, CheckIcon, ClockIcon, CogIcon, BellSlashIcon, AttentionBadge, attentionWords, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, ModelIcon, MonitorIcon, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TaskDot, TasksIcon, UnpinIcon } from '@client/ui.tsx'
-import { placeThreads, type Thread } from '@client/threads.ts'
+import { placeThreads, threadTabShown, type Thread } from '@client/threads.ts'
 import { restMenu, useRest } from '@plugins/tasks/rest.tsx'
 import { HealthDot, MachineMeter } from '@plugins/health/client.tsx'
 import { toast } from '@plugins/alerts/toasts.tsx'
@@ -674,7 +674,7 @@ function ThreadRow({ t, p, snap, pad, data }: { t: Thread; p: Place; snap: Snaps
     if (menu.held()) return
     if (task) return splitClick(e) ? openSplit({ kind: 'task', id: task.id }) : openTask(task.id)
     goPlace(p.id)
-    setUI({ term: tab!.term, arts: null, menu: false, plus: null, pick: null })
+    setUI(threadTabShown(tab!))
   }
   return (
     <li {...data} {...(menuable ? menu.press : {})}

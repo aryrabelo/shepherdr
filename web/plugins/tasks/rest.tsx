@@ -42,7 +42,7 @@ async function restNow(chat: string, verb: Verb, more: Parameters<typeof restCha
   try {
     const r = await restChat(chat, verb, more)
     if (r?.ok === false || r?.error) answerRest(chat, asked, null)
-    else if ((verb === 'snooze' || verb === 'unsettle') && r?.until) answerRest(chat, asked, restMark('snooze', r.until, asked.at))
+    else if ((verb === 'snooze' || verb === 'unsettle') && r?.until) answerRest(chat, asked, restMark('snooze', r.until, undefined, asked))
     return r
   } catch (e) {
     answerRest(chat, asked, null)

@@ -9,7 +9,7 @@ import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
 import { groupFor, groupTasks, loadAllDone, loadGroups, loadShut, keepTasks, namesFor, saveAllDone, saveGroups, saveShut, shownGroup, SETTLED, SETTLED_OPEN, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
 import { canDock, CHAT_READ, fit as fitSidebars, focused, loadSidebars, PANEL, RIGHT, saveSidebars, showPanel, toggleFocus as focusTo, type Sidebars } from './sidebars.ts'
 import { hush } from './motion.ts'
-import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
+import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, panesHere, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
 import { setupGuarded } from './guard.tsx'
 import { followOff, note as noteUsage, noteAct, noteView, startUsage } from './usage.ts'
 import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
@@ -1572,12 +1572,7 @@ export function artifactsIn(snap: Snapshot, list: Pick<ListView, 'chips'>) {
 /* ---------- split view ---------- */
 
 export type { Pane } from './panes.ts'
-
-/** the panes the middle shows: a desktop's (none: the middle as always) */
-export function panesHere(ui: UI): Pane[] {
-  return ui.device === 'desktop' ? ui.split.panes : NONE
-}
-const NONE: Pane[] = []
+export { panesHere } from './panes.ts'
 
 /** a ⌘-click (Ctrl-click off a Mac) opens in split view, as a browser opens a new tab (desktop) */
 export const splitClick = (e: { metaKey: boolean; ctrlKey: boolean }) => state.ui.device === 'desktop' && (e.metaKey || e.ctrlKey)

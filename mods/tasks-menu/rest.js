@@ -9,9 +9,9 @@
 // Shared: the source is lib/rest.js; bin/sync-shared copies it into each mod in lib/COPIES.
 // Edit lib/rest.js, never a mod's copy, then run bin/sync-shared.
 
-import { exec, appHome, shared, setShared } from "herdr";
+import { exec, appHome, shared, setShared, home, readTextFile } from "herdr";
 import { toast, plainError } from "./ui.js";
-import { REST, PENDING, restKey, restMark, marksWith, marksAfter } from "./core/settle.js";
+import { REST, PENDING, restKey, restMark, marksWith, marksAfter, keptSettle, keyVerb, shownRest, stillSettled, wordOf, SETTLED } from "./core/settle.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const RESTED = "tasks.rested";
@@ -46,7 +46,7 @@ export async function restCli(verb, x, more = []) {
     answer(null);
     throw e;
   }
-  if (out.until && (verb === "snooze" || verb === "unsettle")) answer(restMark("snooze", out.until, asked.at));
+  if (out.until && (verb === "snooze" || verb === "unsettle")) answer(restMark("snooze", out.until, undefined, asked));
   return out;
 }
 
@@ -97,6 +97,29 @@ export function wakeSeen(agent) {
   if (!agent || Date.now() - (woken.get(agent) ?? 0) < 60000) return;
   woken.set(agent, Date.now());
   wake({ agent }, null, { quiet: true });
+}
+
+// chat.settle (Ctrl+Shift+S, mods/chat): what's in view settled, or unsettled when it shows settled (its row's mark too:
+// core keyVerb over shownRest); not while its agent works or asks. live: the agent's live terminal in view (null: its
+// agent has ended); task: a task's thread ({ machine, folder, ref, slug, id }), else the agent (agent: its address).
+// A task's thread with no live agent too (ASH-14): whether it's settled is on the task (core keptSettle), read from its
+// list's file on its machine. -> the verb it ran ("settle", "unsettle") or null.
+export async function settleInView({ live = null, task = null, agent = null, what }) {
+  const x = task ? { machine: task.machine ?? null, folder: task.folder, ref: task.ref } : { agent };
+  if (!live && !task) return null;
+  const word = live ? wordOf(live) : null;
+  let info = live && stillSettled(live, word) ? { rest: SETTLED } : null;
+  if (!live) {
+    try {
+      const text = await readTextFile(`${home()}/.herdr/tasks/${task.slug}.json`, task.machine ? { on: task.machine } : undefined);
+      const t = (JSON.parse(text || "null")?.tasks ?? []).find((y) => String(y.id) === String(task.id));
+      info = t ? keptSettle(t) : null;
+    } catch { info = null; }
+  }
+  const verb = keyVerb(shownRest(info, (shared(PENDING) ?? {})[restKey(x)]).info, word);
+  if (verb === "unsettle") await unsettle(x, what);
+  else if (verb === "settle") await settle(x, what);
+  return verb;
 }
 
 // A toast's click (tabs-tasks.undo-rest-<at>): that settle or snooze undone, once.
