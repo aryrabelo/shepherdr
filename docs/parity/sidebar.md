@@ -146,15 +146,15 @@ write shape: `core/folders.test.js`).
 
 | Element | Window | Web | State |
 |---|---|---|---|
-| Which folder | folders.js `foldered` → core `folderOf`: a drag (`of`) beats the rules, else the deepest rule into where the space works, the first on a tie; a worktree space follows the space it shows under | model.ts `folderGroups` → core `foldersOf`, same rules | ✓ |
+| Which folder | main.js `foldered` → core `foldersOf`: a drag (`of`) beats the rules, else the deepest rule into where the space works now (`folderPlace`: its first terminal's live folder, a task worker's checkout too, else where it was made: the mod's `place()`), the first on a tie; a worktree space goes with its repo's own space, found among every space here (pinned or in a section too) | model.ts `placeOf` (the space's first terminal's live folder, else where it was made) → folders.ts `folderGroups` → core `foldersOf`, the repo found the same way | ✓ |
 | Where | this computer's spaces only, under its machine before its spaces in none; a pinned space or one in a Shepherdr section shows there, not in its folder | same (model.ts excludes pinned and sectioned spaces) | ✓ |
 | Heading | main.js:585 `folderHead`: folder icon in its color (core `folderColor`), its name, a chevron; folded, its red/green counts added up | P:909 `FolderHeading`: the same `Heading` as a section's, folded `Inside` counts | ✓ |
 | Folded: still shows the space you're in and unread ones | main.js:566 | P:299 `stays` (as a section's) | ✓ |
-| Tap folds | main.js:591 writes the file (`folders.js fold` → core `withFolderFolded`, `at` past the one read) | P:219 `toggleFolder`: shown at once, `act({type:'folder', op:'fold'})` → actions.ts, dropped if refused or after 10 s | ✓ |
-| Drag in | onto its header or among its spaces: `of[space] = folder` | `act({type:'move', to:'f:<id>'})`: leaves Pinned and its section first, then `core.withSpaceIn` | ✓ |
-| Drag out | onto a loose space or the machine's header: `""` where a rule would take it back, else out of `of` | `act({type:'move', to:'m:<host>'})`, same `core.withSpaceIn` | ✓ |
+| Tap folds | main.js `folderHead` → `folders.js fold`: the state it was clicked to (core `withFolderFolded(d, id, folded)`, never a toggle done again on a newer copy), `at` past the one read; changes written one after the other | P `toggleFolder`: shown at once, `act({type:'folder', op:'fold', folded})` → actions.ts, the same core call under a lock (folders.ts `changeFolders`), dropped if refused or after 10 s | ✓ |
+| Drag in | onto its header or among its spaces: `of[space] = folder` | `act({type:'move', to:'f:<id>'})`: leaves Pinned and its section first, then `core.withSpaceIn`; it shows last among the folder's spaces (no `before`: a folder keeps Herdr's order, shared/order.ts `moveIn`) | ✓ |
+| Drag out | onto a loose space, the machine's header, or the dashed "Drop here to take it out of its folder" strip that shows while a space shown in a folder is dragged (main.js `outStrip`, the mod's): `""` where a rule would take it back, else out of `of`. Only a space that showed in a folder: leaving Pinned or a section keeps its rules' folder | `act({type:'move', to:'m:<host>'})`, same `core.withSpaceIn`, only when it showed in a folder (folders.ts `shown`) | ◇ the web has no strip: its machine heading is always there to drop on |
 | Reorder within | Herdr's own order (`space.move`), as a machine's loose spaces | `act({type:'order', under:'f:<id>'})` run as a machine's own (`herdr-app do space.move`, else `saved-spaces.ts`) | ✓ |
 | Missing file | no folders: the sidebar as before | same (no `folders` field in the snapshot) | ✓ |
 | Written by either layout | the same file as the space-folders mod (herdr-desktop-config, main-folders): a fold or a drag from either one's window, or from the web, bumps `at` and both show it within 15 s / the next poll | the service reads it with each refresh (10 s) and after its own write | ✓ |
 
-Counts: ✓ 80, ◇ 10, ✗ 0.
+Counts: ✓ 83, ◇ 11, ✗ 0.

@@ -661,7 +661,8 @@
       "service": [
         "model.ts",
         "compat.ts",
-        "actions.ts"
+        "actions.ts",
+        "folders.ts"
       ]
     },
     {
