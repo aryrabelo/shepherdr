@@ -11,7 +11,7 @@
 
 import { exec, appHome, shared, setShared } from "herdr";
 import { toast, plainError } from "./ui.js";
-import { REST } from "./core/settle.js";
+import { REST, PENDING, restKey, restMark, marksWith, marksAfter } from "./core/settle.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const RESTED = "tasks.rested";
@@ -26,13 +26,27 @@ export function targetArgs(x) {
   return { machine: m, args: ["--agent", m ? a.slice(m.length + 1) : a] };
 }
 
-// herdr-task <verb> on a target: its JSON, or throws with its words.
+// herdr-task <verb> on a target: its JSON, or throws with its words. The row moves at once (ASH-14): a mark in shared
+// "tasks.restnow" (core/settle.js PENDING) the sidebar and the Tasks panel show until what they read agrees; a refusal
+// takes it back, a snooze's answer gives it its wake time. An Undo that puts a snooze back (unsettle --snooze-until) is
+// snoozed until then at once. An answer touches only its own request's mark (marksAfter): a newer action on the row wins.
 export async function restCli(verb, x, more = []) {
+  const key = restKey(x);
+  const i = more.indexOf("--snooze-until"), back = verb === "unsettle" && i >= 0 ? Number(more[i + 1]) : 0;
+  const asked = back > Date.now() ? restMark("snooze", back) : restMark(verb);
+  setShared(PENDING, marksWith(shared(PENDING), key, asked));
+  const answer = (m) => setShared(PENDING, marksAfter(shared(PENDING), key, asked, m));
   const { machine, args } = targetArgs(x);
-  const r = await exec(CLI(), [...(machine ? ["--on", machine] : []), verb, ...args, ...more, "--json"]);
   let out = null;
-  try { out = JSON.parse(r.stdout || "null"); } catch {}
-  if (r.code !== 0 || !out || out.error) throw new Error(out?.error || r.stderr?.trim() || "herdr-task refused it.");
+  try {
+    const r = await exec(CLI(), [...(machine ? ["--on", machine] : []), verb, ...args, ...more, "--json"]);
+    try { out = JSON.parse(r.stdout || "null"); } catch {}
+    if (r.code !== 0 || !out || out.error) throw new Error(out?.error || r.stderr?.trim() || "herdr-task refused it.");
+  } catch (e) {
+    answer(null);
+    throw e;
+  }
+  if (out.until && (verb === "snooze" || verb === "unsettle")) answer(restMark("snooze", out.until, asked.at));
   return out;
 }
 

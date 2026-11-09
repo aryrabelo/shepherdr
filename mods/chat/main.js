@@ -63,7 +63,7 @@ const DICT_SLOW = 5000;
 import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, FILES as THREAD_FILES, CHANGES as THREAD_CHANGES, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
-import { stillSettled, napping, woke, notNews, wordOf } from "./core/settle.js";
+import { stillSettled, napping, woke, notNews, wordOf, keptSettle, keyVerb, shownRest, restKey, PENDING, SETTLED } from "./core/settle.js";
 import { settle, unsettle, wake, wakeSeen } from "./rest.js";
 import { ScreenWatch, screenStrips, openCard, cardsOf, starting, mayStart, cliOf } from "./screens.js";
 import { dayLabel, dayOf } from "./days.js";
@@ -4103,16 +4103,25 @@ export default class Chat extends View {
 
   // chat.settle (ASH-12): the agent in view settled, as its row's or header's Settle, or unsettled when it is. A task's
   // thread settles its task (its live agents, herdr-task settle <ref>), else the agent. Not while it works or asks.
+  // ASH-14: a task's thread with no live agent too (its settle is kept on the task: core/settle.js keptSettle, read from
+  // its list's file); what shows is what counts, its row's mark too (shared "tasks.restnow": core keyVerb, shownRest).
   settleKey() {
     const k = terminals().find((x) => x.address === this.addr && x.state === "live");
-    if (!k) return;
-    const word = wordOf(k);
     const key = this.taskKey;
     const task = this.thread && this.taskRef && key?.folder ? { machine: key.machine ?? null, folder: key.folder, ref: this.taskRef } : null;
+    if (!k && !task) return;
     const x = task ?? { agent: this.addr };
     const what = task ? this.taskRef : toastWho(k);
-    if (stillSettled(k, word)) unsettle(x, what);
-    else if (word !== "working" && word !== "blocked") settle(x, what);
+    const go = (info, word) => {
+      const verb = keyVerb(shownRest(info, (shared(PENDING) ?? {})[restKey(x)]).info, word);
+      if (verb === "unsettle") unsettle(x, what);
+      else if (verb === "settle") settle(x, what);
+    };
+    if (k) return go(stillSettled(k, wordOf(k)) ? { rest: SETTLED } : null, wordOf(k));
+    // its agent has ended: whether it's settled is on the task, in its list's file on its machine
+    readTextFile(`${home()}/.herdr/tasks/${key.slug}.json`, key.machine ? { on: key.machine } : undefined)
+      .then((text) => (JSON.parse(text || "null")?.tasks ?? []).find((t) => String(t.id) === String(key.id)) ?? null, () => null)
+      .then((t) => go(t ? keptSettle(t) : null, null), () => go(null, null));
   }
 
   myPane() {

@@ -8,6 +8,8 @@
 // it: the name and emoji the sidebar shows. A space nobody named reads after where it is
 // (nameOf: "Home", its repo, its folder); two with one name on a machine show their folder dim.
 // A machine that isn't connected reads "Offline", dimmed and folded, with no + or meter.
+// At full width each space opens into its threads under its row (threads.js, ASH-14): its tasks at work or waiting,
+// its own agents in its tabs, then its Snoozed and Settled shelves.
 // Opened as an overlay (props.view), this mod is instead one of its menus (popups.js), the
 // rename and New section dialog (rename.js) or that dialog's icon picker (icon.js).
 
@@ -29,6 +31,7 @@ import { countBadge, red, green, H, TEXT, RADIUS, toast } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { spaceName, gitTail, tilde, sharedNames } from "./core/spaces.js";
 import { coordinatorTab } from "./coordinator.js";
+import { Threads } from "./threads.js";
 
 const POPUPS = { add: Menu, space: Menu, section: Menu, icon: IconPicker, rename: Rename, machine: MachinePopup };
 
@@ -103,6 +106,9 @@ export default class Spaces extends View {
       this.popup.init(cx);
       return;
     }
+    // Each space's threads under its row (threads.js, ASH-14): its tasks at work and its own agents, every machine's.
+    this.threads = new Threads();
+    this.threads.start(cx);
     this.git = {}; // where() -> { name, branch, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -504,8 +510,13 @@ export default class Spaces extends View {
       .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none())
       .when(this.pressed !== null && this.over === "pinned" && !open, (el) => el.child(this.line(t, "bottom")));
     const shown = open ? members : members.filter((r) => r.w.active || this.unread.has(r.w.id));
-    return [head, ...shown.map((r, n) => this.row({ ...r, tree: null, pinned: true, tag: many ? machineLook(r.w.machine ?? null).name : null,
+    return [head, ...shown.flatMap((r, n) => this.withThreads({ ...r, tree: null, pinned: true, tag: many ? machineLook(r.w.machine ?? null).name : null,
       end: open && n === shown.length - 1 ? "pinned" : null }, t))];
+  }
+
+  // A space's row and, under it, its threads (threads.js): only at full width (the rail draws compact()).
+  withThreads(r, t) {
+    return [this.row(r, t), ...this.threads.rows(r.w, t)];
   }
 
   // The + menu under its button: its right edge at the button's.
@@ -520,7 +531,7 @@ export default class Spaces extends View {
     const sections = sectionsOf(m);
     const byId = new Map(list.map((r) => [r.w.id, r]));
     const filed = new Set(sections.flatMap((s) => s.spaces));
-    const out = this.ordered(list.filter((r) => !filed.has(r.w.id))).map((r) => this.row(r, t));
+    const out = this.ordered(list.filter((r) => !filed.has(r.w.id))).flatMap((r) => this.withThreads(r, t));
     for (const s of sections) {
       const members = s.spaces.map((id) => byId.get(id)).filter(Boolean);
       const open = !s.folded || (this.pressed !== null && this.peek === s.id);
@@ -528,7 +539,7 @@ export default class Spaces extends View {
       // Folded, it still shows the space you're in and its unread ones, as Slack does.
       const shown = this.ordered(open ? members : members.filter((r) => r.w.active || this.unread.has(r.w.id)));
       // Dropped on the header, a space goes to the section's end: the line shows under its last row.
-      shown.forEach((r, n) => out.push(this.row({ ...r, end: open && n === shown.length - 1 ? `section:${s.id}` : null }, t)));
+      shown.forEach((r, n) => out.push(...this.withThreads({ ...r, end: open && n === shown.length - 1 ? `section:${s.id}` : null }, t)));
       if (open && !members.length) out.push(this.emptySection(s, t));
     }
     return out;
@@ -752,11 +763,12 @@ export default class Spaces extends View {
 
   close() { this.popup?.close?.(); }
 
-  // One copy of Herdr's live lists for the whole render (live.js): past ~50 ms Herdr stops it.
+  // One copy of Herdr's live lists for the whole render (live.js): past ~50 ms Herdr stops it. The threads' reads too.
   render(cx) {
     // the voice call's card sets it again (voiceRow): its clock ticks only while one shows
     this.calling = false;
-    return inRender(() => this.draw(cx));
+    this.threads?.begin();
+    try { return inRender(() => this.draw(cx)); } finally { this.threads?.end(cx); }
   }
 
   draw(cx) {

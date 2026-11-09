@@ -14,6 +14,8 @@ import { setupGuarded } from './guard.tsx'
 import { followOff, note as noteUsage, noteAct, noteView, startUsage } from './usage.ts'
 import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
 import { machineName, resting, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
+import { marksAfter, marksLeft, marksWith, withMarks, type RestMark, type RestMarks } from './threads.ts'
+import * as RSc from '@core/settle.js'
 
 /* ---------- slots ---------- */
 
@@ -319,6 +321,9 @@ interface State {
   outbox: Outgoing[]
   /** how Shepherdr's last update of itself went */
   update: UpdateStatus | null
+  /** ASH-14: rows put away (or back) from this screen, shown so at once until the snapshot agrees (threads.ts), by chat
+   *  key */
+  restNow: RestMarks
   ui: UI
 }
 
@@ -423,6 +428,7 @@ let state: State = {
   terms: {},
   outbox: loadOutbox(),
   update: null,
+  restNow: {},
   ui: {
     device: deviceFor(innerWidth),
     place: params.get('place') ?? lastPlace() ?? 'all',
@@ -586,6 +592,32 @@ export function useUI<T>(pick?: (ui: UI) => T) {
   return useStore((s) => (pick ? pick(s.ui) : s.ui))
 }
 export const useSnap = () => useStore((s) => s.snap)
+
+/** ASH-14: the rows put away (or back) from this screen, by chat key (threads.ts) */
+export const useRestNow = (): RestMarks => useStore((s) => s.restNow)
+
+/** mark a row put away (or back) at once (a mark), or drop its mark (null: refused); one never answered stops counting
+ *  after core/settle.js PENDING_MS */
+export function markRest(chat: string, mark: RestMark | null): void {
+  state = { ...state, restNow: marksWith(state.restNow, chat, mark) }
+  emit()
+  // one never answered: the row goes back where the snapshot has it
+  if (mark) setTimeout(() => {
+    const left = state.snap ? marksLeft(state.snap, state.restNow) : marksWith(state.restNow, '', null)
+    if (left === state.restNow) return
+    state = { ...state, restNow: left }
+    emit()
+  }, (RSc.PENDING_MS as number) + 100)
+}
+
+/** herdr-task's answer to the request that set `asked` on a row: its mark replaced (a snooze's wake time) or dropped
+ *  (null: refused), unless a newer action on that row set its own meanwhile (core/settle.js marksAfter) */
+export function answerRest(chat: string, asked: RestMark, mark: RestMark | null): void {
+  const next = marksAfter(state.restNow, chat, asked, mark)
+  if (next === state.restNow) return
+  state = { ...state, restNow: next }
+  emit()
+}
 
 /* ---------- drafts ---------- */
 
@@ -806,7 +838,7 @@ export function connect() {
       // an add-on switched on or off in Settings › Window: the page starts again with its plugins in or out (main.tsx)
       const booted = (window as { shepherdrOff?: string[] }).shepherdrOff
       if (booted && msg.snapshot.off && [...msg.snapshot.off].sort().join() !== [...booted].sort().join()) return location.reload()
-      state = { ...state, snap: msg.snapshot }
+      state = { ...state, snap: msg.snapshot, restNow: marksLeft(msg.snapshot, state.restNow) }
       followOff(msg.snapshot.off)
       noteView(state.ui)
       stayOnShown()
@@ -1114,8 +1146,8 @@ export function restChat(chat: string, type: 'settle' | 'unsettle' | 'snooze' | 
   return act({ type, chat, ...more })
 }
 
-/** a task's chat key, as its row menu's actions name it */
-export const taskChat = (t: Task) => t.agent?.chat ?? `${t.id}/Agent`
+/** a task's chat key, as its row menu's actions name it (threads.ts) */
+export { taskChat } from './threads.ts'
 
 /** pause a working task: its agent is interrupted and the task is To do until written to */
 export function pauseTask(t: Task) {
@@ -1164,9 +1196,10 @@ export function counts(snap: Snapshot, placeId: string) {
 
 export { GROUPS, groupChoices, groupFor, keepTasks, namesFor, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
 
-/** a list's tasks in their groups, in the order they show (groups.ts groupTasks) */
-export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy): TaskGroup[] {
-  const tasks = tasksIn(snap, list)
+/** a list's tasks in their groups, in the order they show (groups.ts groupTasks), each as it shows with its mark on this
+ *  screen (ASH-14: put away or back at once) */
+export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy, marks: RestMarks = state.restNow): TaskGroup[] {
+  const tasks = withMarks(tasksIn(snap, list), marks)
   if (list.attention) return snap.places.flatMap((p) => (['need', 'ready'] as const).flatMap((status) => {
     const rows = tasks.filter((t) => t.place === p.id && t.status === status && !resting(t))
     return rows.length ? [{ key: `${p.id}|${status}`, label: `${p.name} · ${status === 'need' ? 'Needs you' : 'Ready'}`, note: machineName(snap.machines, p.machine), tasks: rows, names: { machine: false, project: false } }] : []
@@ -1180,12 +1213,12 @@ export { SETTLED, SETTLED_OPEN, SNOOZED } from './groups.ts'
 
 /** a list's task groups as this screen shows them: grouped as this device chose, Done cut short until Show all, a
  *  group folded shut showing none of its tasks (For you's Done shut until opened) */
-export function shownGroups(snap: Snapshot, list: ListView, ui: Pick<UI, 'groups' | 'allDone' | 'shut'> = state.ui) {
+export function shownGroups(snap: Snapshot, list: ListView, ui: Pick<UI, 'groups' | 'allDone' | 'shut'> = state.ui, marks: RestMarks = state.restNow) {
   const shut = (key: string) => ui.shut.includes(`${list.key}|${key}`)
   const all = (key: string) => ui.allDone.includes(`${list.key}|${key}`)
   const by = groupFor(ui.groups, list.level)
   // Settled (ASH-12) is folded until opened, in every grouping
-  return taskGroups(snap, list, by).map((g) => shownGroup(g, all(g.key), by === 'you' && g.key === 'done' ? !shut(DONE_OPEN) : g.key === SETTLED ? !shut(SETTLED_OPEN) : shut(g.key)))
+  return taskGroups(snap, list, by, marks).map((g) => shownGroup(g, all(g.key), by === 'you' && g.key === 'done' ? !shut(DONE_OPEN) : g.key === SETTLED ? !shut(SETTLED_OPEN) : shut(g.key)))
 }
 
 /** fold a heading of a list's tasks shut or open ("group", "m:machine"); with siblings, them too, the same way */

@@ -7,7 +7,8 @@ as herdr-t3-inbox (Apache-2.0) and the same rules as core/settle.js (keep them e
                        until looked at. An empty value clears either label.
 
 Settled or snoozed isn't news: no needs-you event, alert or count for it. A task is its live agents':
-settled while each of them still is (and no failing checks came up since), snoozed while one is."""
+settled while each of them still is (and no failing checks came up since), snoozed while one is. A task
+with no live agent settles too (ASH-14): the settle is kept on the task (settled_at) until new work."""
 
 SETTLED = "settled"
 SNOOZED = "snoozed"
@@ -82,13 +83,36 @@ def stale(k, word, kids=()):
             "snoozed": snoozed_until(k) > 0 and failed(word, kids)}
 
 
+def kept_settle(task):
+    """As core/settle.js keptSettle(): a task settled with no live agent to label keeps when on itself
+    (settled_at). A start or resume since (started), an agent started for it since (agents[].at), or failing
+    checks or a conflict found since (attention_at) end it. A done task has none."""
+    task = task or {}
+    try:
+        at = int(float(task.get("settled_at") or 0))
+    except (TypeError, ValueError):
+        at = 0
+    if not at or task.get("state") == "done":
+        return None
+
+    def since(x):
+        try:
+            return int(float(x or 0)) > at
+        except (TypeError, ValueError):
+            return False
+    if since(task.get("started")) or since(task.get("attention_at")) or any(since((a or {}).get("at")) for a in task.get("agents") or []):
+        return None
+    return {"rest": SETTLED, "at": at}
+
+
 def task_rest(task, live, helpers, now_ms):
     """As core/settle.js taskRest(): live = its agents (hc records with labels), helpers = its worker's
     helper agents. -> None, {"rest": "settled", "at"}, {"rest": "snoozed", "until"},
-    {"rest": None, "until", "showing": True} or {"rest": None, "woke": until}."""
+    {"rest": None, "until", "showing": True} or {"rest": None, "woke": until}. With no live agent of its
+    own: kept_settle()."""
     own = [k for k in live if labels_of(k).get("herdr.role") != "reviewer"]
     if not own:
-        return None
+        return kept_settle(task)
     kids = [w for w in (word_of(h) for h in helpers) if w]
     settled = [parse_settled(labels_of(k).get(SETTLED)) for k in own]
     if all(settled) and all(still_settled(k, word_of(k), kids) for k in own):

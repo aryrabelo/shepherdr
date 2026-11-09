@@ -400,8 +400,8 @@ def task_facts(s, t):
     """How a task is now, as events read it. Another machine's come this way too (`auto feed`)."""
     live = [k for k in live_agents(s.key(t))] if t["state"] in ("running", "ready") else []
     working_ones = [k for k in live if agent_running(k)]
-    # Settled or snoozed by hand (ASH-12): its labels need hc get (hc ls has none).
-    rest = rest_now(t, s.key(t), [detail(k) for k in working_ones]) if working_ones else None
+    # Settled or snoozed by hand (ASH-12): its labels need hc get (hc ls has none); with none, kept on the task (ASH-14).
+    rest = rest_now(t, s.key(t), [detail(k) for k in working_ones])
     return {"id": t["id"], "ref": s.ref(t), "title": t["title"], "branch": t.get("branch"), "state": t["state"],
             "status": status_of(t, working_ones) if t["state"] == "running" else t["state"],
             "needs": task_status(t, working_ones)[1], "attention": t.get("attention"), "merged": bool(t.get("merged")),
