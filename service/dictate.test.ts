@@ -1,7 +1,7 @@
 // Dictation writes a recording down with ElevenLabs speech to text (Scribe), with the key a voice call uses (voiceKey:
 // from the machine that keeps the secrets). The ElevenLabs call is a stand-in here: what it is sent, and each failure's words.
 import { describe, expect, test } from "bun:test";
-import { dictate, fileName, keyCache, liveToken, cachedKey } from "./dictate.ts";
+import { dictate, fileName, keyCache, liveToken, cachedKey, planKey } from "./dictate.ts";
 import * as V from "../core/voice.js";
 
 const { voiceKey, KEY_SCRIPT, STT_MODEL } = V as any;
@@ -165,4 +165,13 @@ test("a change of Voice from finds the voice again at once (the kept one was for
   const b = cachedKey(hub, "openai");
   expect(b).not.toBe(a);
   expect(cachedKey(hub, "openai")).toBe(b);
+});
+
+// SHEP-128 on the fork (ASH-3): Automatic can pick OpenAI's key for calls; the credits read goes to ElevenLabs, so it must
+// ask for ElevenLabs' own key, or an OpenAI key would be sent there. No ElevenLabs key: no row, and calls don't need one.
+test("the plan usage read asks only for ElevenLabs' key", async () => {
+  const asked: unknown[] = [];
+  const found = await planKey(hub, (async (_h: unknown, name: string) => { asked.push(name); return { key: KEY }; }) as any).get();
+  expect(asked).toEqual(["ELEVENLABS_API_KEY"]);
+  expect(found).toEqual({ key: KEY });
 });
