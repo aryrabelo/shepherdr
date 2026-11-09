@@ -636,6 +636,35 @@
       ]
     },
     {
+      "id": "space-folders",
+      "addon": "core",
+      "title": "Space folders (the space-folders mod's file)",
+      "core": [
+        "folders"
+      ],
+      "herdr": {
+        "mods": [
+          "spaces-chat"
+        ]
+      },
+      "web": {
+        "files": [
+          "plugins/places/client.tsx"
+        ]
+      },
+      "forms": {
+        "herdr": "This computer's spaces in the folders of ~/.config/herdr-space-folders.json (the space-folders mod's, so both layouts show the same), under the machine before the spaces in none; a click on a folder's header folds it and a dragged space goes in or out, written to that file; no file: the sidebar as before",
+        "desktop": "Folder headings under this computer's heading in the sidebar; tap folds, drag a space onto a folder",
+        "tablet": "Folder headings in the drawer; tap folds, long-press then drag a space onto a folder",
+        "phone": "Folder headings in the drawer; tap folds, long-press then drag a space onto a folder"
+      },
+      "service": [
+        "model.ts",
+        "compat.ts",
+        "actions.ts"
+      ]
+    },
+    {
       "id": "assistant",
       "addon": "assistants",
       "title": "Assistant per space",

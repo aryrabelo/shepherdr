@@ -137,4 +137,24 @@ Window: `mods/spaces-chat/threads.js` (T), `main.js` `withThreads`, `lib/taskthr
 | Key | Ctrl+Shift+S (`chat.settle`) on a thread's chat once opened: a task's (with no live agent too: its kept settle read from its list's file, core `keptSettle`), an agent's own; what shows counts, its mark too (mods/chat `settleKey`: core `keyVerb`, `shownRest`); not while its agent works or asks | keyboard plugin `chat.settle`: TH `settleTarget` (a task with `canSettle`, the task open with no agent at all, an agent's tab of its own, the Assistant), with its mark | ✓ |
 | Where | under its space in Pinned, a section or its machine, at full width (the rail shows none); hidden while its section is folded and the space isn't shown | under its place row, hidden with it; in the phone and tablet drawer too | ✓ |
 
-Counts: ✓ 71, ◇ 12, ✗ 0.
+## Space folders (ASH-15)
+
+Window: `mods/spaces-chat/folders.js` (reads and writes the file), `main.js` `foldered`, `folderHead`, `refile`. Web:
+P `FolderHeading`, `listsOf`, `placeTree`, the data in `service/model.ts`, `service/folders.ts`, `service/compat.ts`,
+`service/actions.ts`. Shared: `core/folders.js` (which folder a space is in, the deepest rule, the file's read and
+write shape: `core/folders.test.js`).
+
+| Element | Window | Web | State |
+|---|---|---|---|
+| Which folder | folders.js `foldered` → core `folderOf`: a drag (`of`) beats the rules, else the deepest rule into where the space works, the first on a tie; a worktree space follows the space it shows under | model.ts `folderGroups` → core `foldersOf`, same rules | ✓ |
+| Where | this computer's spaces only, under its machine before its spaces in none; a pinned space or one in a Shepherdr section shows there, not in its folder | same (model.ts excludes pinned and sectioned spaces) | ✓ |
+| Heading | main.js:585 `folderHead`: folder icon in its color (core `folderColor`), its name, a chevron; folded, its red/green counts added up | P:909 `FolderHeading`: the same `Heading` as a section's, folded `Inside` counts | ✓ |
+| Folded: still shows the space you're in and unread ones | main.js:566 | P:299 `stays` (as a section's) | ✓ |
+| Tap folds | main.js:591 writes the file (`folders.js fold` → core `withFolderFolded`, `at` past the one read) | P:219 `toggleFolder`: shown at once, `act({type:'folder', op:'fold'})` → actions.ts, dropped if refused or after 10 s | ✓ |
+| Drag in | onto its header or among its spaces: `of[space] = folder` | `act({type:'move', to:'f:<id>'})`: leaves Pinned and its section first, then `core.withSpaceIn` | ✓ |
+| Drag out | onto a loose space or the machine's header: `""` where a rule would take it back, else out of `of` | `act({type:'move', to:'m:<host>'})`, same `core.withSpaceIn` | ✓ |
+| Reorder within | Herdr's own order (`space.move`), as a machine's loose spaces | `act({type:'order', under:'f:<id>'})` run as a machine's own (`herdr-app do space.move`, else `saved-spaces.ts`) | ✓ |
+| Missing file | no folders: the sidebar as before | same (no `folders` field in the snapshot) | ✓ |
+| Written by either layout | the same file as the space-folders mod (herdr-desktop-config, main-folders): a fold or a drag from either one's window, or from the web, bumps `at` and both show it within 15 s / the next poll | the service reads it with each refresh (10 s) and after its own write | ✓ |
+
+Counts: ✓ 80, ◇ 10, ✗ 0.
