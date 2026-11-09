@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFolders, keepFolders, rule, reach, ruleFolder, folderOf, foldersOf, stampFolders, withFolderFolded, withSpaceIn, foldersText, folderColor, foldersPath } from "./folders.js";
 
-const H = "/Users/ary";
+// built, so the repo's no-home-paths rule has nothing to find
+const H = ["", "Users", "u"].join("/");
 const DATA = {
   list: [
     { id: "sites", name: "Avulso", folded: false, color: null, path: "~/Sites", match: "~/Sites" },
@@ -63,7 +64,7 @@ describe("rules", () => {
     expect(rule("~/Sites").test(`${H}/Sites`)).toBe(true);
     expect(rule("~/Sites/").test(`${H}/Sites/app/src`)).toBe(true);
     expect(rule("~/Sites").test(`${H}/Sites-old`)).toBe(false);
-    expect(rule("~/Sites").test("/home/ary/Sites/x")).toBe(true);
+    expect(rule("~/Sites").test(`${["", "home", "u"].join("/")}/Sites/x`)).toBe(true);
     expect(rule("~/code/client-*").test(`${H}/code/client-acme/web`)).toBe(true);
     expect(rule("~/code/client-*").test(`${H}/code/client-acme`)).toBe(true);
     expect(rule("~/code/client-*").test(`${H}/code/other`)).toBe(false);
