@@ -64,7 +64,7 @@ test("an OpenAI call from a phone: its session, a tool shown on that phone, the 
   expect(auth).toBe(`Bearer ${KEY}`);
   expect(got[0].type).toBe("session.update");
   expect(JSON.stringify(got[0])).not.toContain(KEY);
-  expect(got[0].session.tools.map((t: any) => t.name)).toEqual(["look", "open", "send", "screen", "act", "end_call", "skip_turn"]);
+  expect(got[0].session.tools.map((t: any) => t.name)).toEqual(["look", "open", "send", "screen", "act", "call_view", "end_call", "skip_turn"]);
   // the same prompt as ElevenLabs' (SHEP-105: with Shepherdr itself), with where the call is
   expect(got[0].session.instructions).toContain("The person called Shepherdr itself");
   expect(got[0].session.instructions).toContain("Where the call is now:");

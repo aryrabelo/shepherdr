@@ -9,9 +9,9 @@
 import type { Hub } from "./hub.ts";
 import * as V from "../core/voice.js";
 import * as O from "../core/voice-openai.js";
-import { voiceFor, voiceSetting } from "./voice.ts";
+import { keyFor, voiceFor, voiceSetting } from "./voice.ts";
 
-const { transcribe, liveTokenRequest, sttError, dictateKeyError, MAX_AUDIO } = V as any;
+const { transcribe, liveTokenRequest, sttError, dictateKeyError, MAX_AUDIO, KEY_NAME } = V as any;
 const { openaiTranscribe } = O as any;
 
 type Key = { key: string; agent?: string; provider?: "openai" | "elevenlabs" } | { error: string; why: string; dictate?: string };
@@ -45,8 +45,15 @@ export const cachedKey = (hub: Pick<Hub, "call">, setting = voiceSetting()) => {
   if (!cache || cacheFor !== setting) { cacheFor = setting; cache = keyCache(() => voiceFor(hub, () => setting)); }
   return cache;
 };
+const wasRefused = (e: unknown) => /\b401\b|invalid.*key|incorrect api key|unauthori/i.test(String((e as Error)?.message ?? e));
 /** a refused key: found again next time */
-const refused = (e: unknown) => { if (/\b401\b|invalid.*key|incorrect api key|unauthori/i.test(String((e as Error)?.message ?? e))) cache?.forget(); };
+const refused = (e: unknown) => { if (wasRefused(e)) cache?.forget(); };
+
+let plan: ReturnType<typeof keyCache> | null = null;
+/** SHEP-128's credits under Plan usage: ElevenLabs' own key whatever Voice from picks (cachedKey may hold OpenAI's, which
+ *  must never be sent to ElevenLabs); none kept means no row, and calls never need it. */
+export const planKey = (hub: Pick<Hub, "call">, find: typeof keyFor = keyFor) => (plan ??= keyCache(() => find(hub, KEY_NAME)));
+export const planRefused = (e: unknown) => { if (wasRefused(e)) plan?.forget(); };
 
 export async function dictate(hub: Pick<Hub, "call">, audio: Blob, fetchFn: typeof fetch = fetch, key = () => cachedKey(hub).get()): Promise<string> {
   try {

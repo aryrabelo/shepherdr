@@ -48,7 +48,8 @@ import { Agents } from "./agents.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
 import { Shows, showInWindow } from "./show.ts";
-import { dictate, liveToken } from "./dictate.ts";
+import { dictate, liveToken, planKey, planRefused } from "./dictate.ts";
+import { readUsage } from "../core/voice.js";
 import { sh, exec } from "./model.ts";
 import { folders, newSpace, newSpaceInfo } from "./spaces.ts";
 import { kindOf } from "../core/chat-reader.js";
@@ -151,6 +152,14 @@ const machines = new Machines(hub, () => model.machineNames());
 machines.onChange = () => model.rebuild();
 compat.machineStats = (m) => machines.of(m);
 machines.windowStats = () => model.value("machines.stats");
+// SHEP-128: the ElevenLabs plan under this machine's Plan usage, with ElevenLabs' own key (kept in memory only), whatever
+// Voice from picks; none while the Voice add-on is off or there is no ElevenLabs key
+machines.voiceUsage = async () => {
+  if (offList().includes("voice")) return null;
+  const r: any = await readUsage(() => planKey(hub).get());
+  if (r?.state === "unknown") planRefused(r.why);
+  return r;
+};
 machines.start();
 const secrets = new Secrets(hub);
 compat.secrets = secrets;

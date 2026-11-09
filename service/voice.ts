@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Hub } from "./hub.ts";
-import { HOME } from "./paths.ts";
+import { HOME, appHome, writable } from "./paths.ts";
 import * as V from "../core/voice.js";
 import * as O from "../core/voice-openai.js";
 import { secretBin } from "./secrets.ts";
@@ -21,8 +21,7 @@ export type { ChatView } from "./voice-hear.ts";
 
 const { API, opening, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, toolWords, turnGate, KEY_NAME } = V as any;
 const { realtimeCall, realtimeUrl, resampler, pickVoice, providerSetting, RATE } = O as any;
-const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
-const SECRETS = join(APP, "secrets");
+const secretsDir = () => join(appHome(), "secrets");
 
 const envFile = (file: string): Record<string, string> => { try { return envLines(readFileSync(file, "utf8")); } catch { return {}; } };
 
@@ -30,7 +29,7 @@ const envFile = (file: string): Record<string, string> => { try { return envLine
  *  the vault here, or the machine that keeps the secrets, read over herdr-core's link into memory only. */
 export function keyFor(hub: Pick<Hub, "call">, name: string = KEY_NAME) {
   return voiceKey({
-    oldFile: () => envFile(join(SECRETS, "elevenlabs.env")).ELEVENLABS_API_KEY || "",
+    oldFile: () => envFile(join(secretsDir(), "elevenlabs.env")).ELEVENLABS_API_KEY || "",
     where: async () => {
       const p = Bun.spawn([secretBin(), "where", "--json"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
       const out = await new Response(p.stdout).text();
@@ -65,13 +64,13 @@ export async function api(path: string, key: string, init: RequestInit = {}) {
 
 /** The "Herdr chat" voice agent, up to this spec (core/voice.js ensureAgent); only its id, a tag of the key and the
  *  spec are kept here, never the key. */
-export function agentId(key: string, made = "", dir = SECRETS, call = api) {
+export function agentId(key: string, made = "", dir = secretsDir(), call = api) {
   const file = join(dir, "elevenlabs-agent.env");
   const tag = createHash("sha256").update(key).digest("hex").slice(0, 16);
   return ensureAgent({
     saved: envFile(file), tag, made,
     api: (path: string, init?: RequestInit) => call(path, key, init),
-    save: (id: string, spec: string) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); writeFileSync(file, agentFile(id, tag, spec), { mode: 0o600 }); },
+    save: (id: string, spec: string) => { writable(file); mkdirSync(dir, { recursive: true, mode: 0o700 }); writeFileSync(file, agentFile(id, tag, spec), { mode: 0o600 }); },
   }) as Promise<string>;
 }
 
@@ -136,7 +135,7 @@ async function dialElevenLabs(hub: Hub, kept?: { key: string; agent?: string }) 
 /** The page's "where" message, checked: what it shows now. */
 export function pageWhere(m: any): Partial<Where> {
   const s = (v: unknown, n = 200) => (typeof v === "string" && v.length <= n ? v : null);
-  return { device: s(m.device, 20), place: s(m.place), task: s(m.task), tab: s(m.tab, 40), artifact: s(m.artifact), settings: m.settings === true };
+  return { device: s(m.device, 20), place: s(m.place), task: s(m.task), tab: s(m.tab, 40), artifact: s(m.artifact), settings: m.settings === true, ...(typeof m.full === "boolean" ? { full: m.full } : {}) };
 }
 
 /** One call: the page's audio to the voice agent and back. message(): a frame from the page; end(): the page went. */
