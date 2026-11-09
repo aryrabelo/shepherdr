@@ -253,6 +253,11 @@ export function secondLine(p, w, queued = null, now = Date.now()) {
   // ASH-12: put away by hand says so; woke says so until looked at
   if (p.rest === "snoozed") return wakesLine(p.restInfo?.until, now);
   if (p.rest === "settled") return `${REST.settled} ${ago(p.restInfo?.at ?? now, true, now)}`;
+  // ASH-13 (aryrabelo/hq's threads): the latest "Próximo:" line its agent wrote (herdr-task keeps it: task.next), unless
+  // Herdr knows something more pressing: a question or permission waiting, failing checks, a provider cut, a start
+  // screen, a stopped agent, a merge under way.
+  const own = p.task?.next;
+  if (own && !p.restInfo?.woke && !(section === "needs" && p.needs !== "reply") && section !== "merging" && section !== "done") return own;
   if (p.restInfo?.woke && section !== "needs") return `${REST.woke} · ${secondLine({ ...p, restInfo: null }, w, queued, now) ?? STATUS[section] ?? ""}`.replace(/ · $/, "");
   return section === "needs" || section === "merging" ? p.why : section === "working" ? p.why ?? w?.text ?? null
     : section === "queued" ? queued

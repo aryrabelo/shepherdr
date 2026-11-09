@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from .base import guard, hc_json, now, run, STORE
 from .settings import bare
 from .agents import (
-    agent_log, agent_running, detail, from_person, live_agents, log_tail, said, starting, status_word,
+    agent_log, agent_running, detail, from_person, live_agents, log_tail, next_line, said, starting, status_word,
     STATUSES,
 )
 from .sessions import session_of
@@ -129,6 +129,13 @@ def news_pass(report, folder=None):
                     else:
                         t.pop("waits", None)
                     s.dirty = True
+                # Its latest "Próximo:" line (ASH-13, the hq way): the Tasks list's second line, read from its log
+                # while it runs (kept once it stops).
+                if s.write and live:
+                    nxt = next_line(t)
+                    if nxt and t.get("next") != nxt:
+                        t["next"] = nxt
+                        s.dirty = True
                 # On its CLI's own start screen (start_screen()): Needs you in the Tasks panel too.
                 screen = v["why"] if v.get("needs") == "screen" else None
                 if s.write and t.get("screen") != screen:

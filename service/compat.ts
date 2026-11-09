@@ -229,13 +229,15 @@ export class Compat {
   /** Every space: its folder and machine (the worktree dialog's "open" marks). */
   allSpaces() { return this.spaceList.map((s) => ({ id: s.id as string, folder: s.folder as string, machine: (s.machine ?? null) as string | null })); }
 
-  /** The tasks a chat's messages can mention (#HAT-1): its folder's, on its machine, as the window's chat has them. */
+  /** The tasks a chat's messages can mention (#HAT-1): its folder's, on its machine, as the window's chat has them
+   *  (herdr-task list --json): its state is the status word ("Ready"), never the row's second line (a "Próximo:" line,
+   *  "Wakes Tomorrow 9:00"); why it needs the person goes in `why`. */
   tasksFor(chatKey: string) {
     const t = chatKey.endsWith("/worker") ? this.rows.find((r) => taskId(r) === chatKey.slice(0, -7)) : null;
     const s = !t ? this.spaceList.find((x) => placeKey(x.id) === chatKey) : null;
     const machine = t ? t.machine ?? null : s?.machine ?? null, folder = t ? t.folder : s?.folder;
     return this.rows.filter((r) => (r.machine ?? null) === machine && r.folder === folder)
-      .map((r) => ({ ref: r.ref, id: r.id, title: r.title, status_text: r.sub ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section }));
+      .map((r) => ({ ref: r.ref, id: r.id, title: r.title, status_text: (T.STATUS as Record<string, string>)[r.section] ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section }));
   }
 
   /** The person's shared choices (service/store.ts, its document) and their values now, set by main. */

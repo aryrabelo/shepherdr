@@ -184,3 +184,20 @@ describe("This space (inSpace)", () => {
     expect(inSpace(null, { machine: null, folder: "/work/shop" })).toBe(false);
   });
 });
+
+describe("the Próximo line (ASH-13, aryrabelo/hq's threads)", () => {
+  const p = (section, more = {}, task = {}) => ({ section, why: "why", needs: null, task: { id: 1, state: "running", next: "Próximo: X (parei em Y; quem deve: Z)", ...task }, ...more });
+  test("is the second line when the agent wrote one", () => {
+    expect(secondLine(p("working"), { text: "Reading files" })).toBe("Próximo: X (parei em Y; quem deve: Z)");
+    expect(secondLine(p("ready", {}, { ready_at: NOW }), null, null, NOW)).toBe("Próximo: X (parei em Y; quem deve: Z)");
+    expect(secondLine(p("needs", { needs: "reply" }))).toBe("Próximo: X (parei em Y; quem deve: Z)");
+  });
+  test("Herdr's own pressing facts still win", () => {
+    for (const needs of ["asks", "attention", "provider", "screen", "stopped"]) expect(secondLine(p("needs", { needs }))).toBe("why");
+    expect(secondLine(p("merging"))).toBe("why");
+  });
+  test("without one, as before", () => {
+    expect(secondLine(p("working", {}, { next: undefined }), { text: "Reading files" })).toBe("why");
+    expect(secondLine({ section: "working", why: null, task: { id: 1 } }, { text: "Reading files" })).toBe("Reading files");
+  });
+});
