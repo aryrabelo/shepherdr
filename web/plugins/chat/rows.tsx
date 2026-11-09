@@ -15,13 +15,14 @@ import { ForkIcon, openPicker, RewindIcon } from '@plugins/reactions/client.tsx'
 import { Markdown } from './markdown.tsx'
 import { jumpTo, startReply } from './reply.ts'
 
-const { WORDS, clock, initialOf, bandActs, bandOrder, imagesLine, fitThumbs, THUMB_GAP, questionsBelow, literal } = CV as unknown as {
+const { WORDS, clock, initialOf, bandActs, rewinds, bandOrder, imagesLine, fitThumbs, THUMB_GAP, questionsBelow, literal } = CV as unknown as {
   literal: (text: string) => string
   WORDS: Record<string, string>
   questionsBelow: (n: number) => string
   clock: (at?: number) => string
   initialOf: (name: string) => string
-  bandActs: (side: 'user' | 'agent', text?: string, o?: { from?: string | null; fork?: boolean }) => string[]
+  bandActs: (side: 'user' | 'agent', text?: string, o?: { from?: string | null; fork?: boolean; rewind?: boolean }) => string[]
+  rewinds: (cli?: string) => boolean
   bandOrder: (side: 'user' | 'agent', acts: string[], o?: { time?: boolean; react?: boolean }) => string[]
   imagesLine: (n: number) => string
   fitThumbs: (sizes: ({ w: number; h: number } | null)[], width?: number) => { boxes: { w: number; h: number }[]; h: number }
@@ -41,15 +42,15 @@ export const onTerminal = (fn: (chat: string) => void) => void (showTerminal = f
 /** ONE row under a message, on its side, its reactions flush under the bubble's outer edge with the smiley beside
  *  them, each side the other's mirror: on yours the time (dim), Reply, Copy, Rewind (not on a /command), the smiley
  *  and then the reactions (furthest right); on the agent's the reactions (furthest left), the smiley, Fork, Copy,
- *  Reply and then the time.
+ *  Reply and then the time. Rewind and Fork only for a CLI the chat drives them on (core/chat-view.js rewinds: not omp).
  *  The reactions always show; the rest while the pointer is on the message,
  *  in room that is always kept, so nothing moves. A finger holds the message instead (its own bar). */
-export function Band({ msg, chat, cli }: { msg: Message; chat: string; cli?: boolean }) {
+export function Band({ msg, chat, cli }: { msg: Message; chat: string; cli?: string }) {
   const you = msg.who === 'you'
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
-  const acts = bandActs(you ? 'user' : 'agent', msg.text, { fork: cli !== false })
+  const acts = bandActs(you ? 'user' : 'agent', msg.text, { fork: rewinds(cli), rewind: rewinds(cli) })
   const react = has('reactions')
   const pills = msg.reactions?.length ? registry.messageEdge.map(({ View }, i) => <View key={i} msg={msg} chat={{ key: chat } as Chat} />) : null
   const time = clock(msg.at)

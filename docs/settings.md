@@ -52,22 +52,48 @@ task values a machine set before (the old machine scope) still apply there until
 
 ## omp as an agent
 
-Workers and the Reviewer can run on omp (Oh My Pi, `omp` on the PATH) beside Claude Code and Codex: Settings › Agents
-lists it once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-models.json`, made again hourly), and
-`herdr-task add|start|resume --agent omp` picks it for one task. The Assistant stays on Claude Code or Codex.
+The Assistant, workers and the Reviewer can run on omp (Oh My Pi, `omp` on the PATH, or the `omp-safe` wrapper that runs
+it in a sandbox) beside Claude Code and Codex: Settings › Agents, the Assistant's model menu and its empty chat list it
+once `omp models --json` lists its models (kept in `~/.cache/herdr/omp-models.json`, made again hourly), and
+`herdr-task add|start|resume --agent omp` picks it for one task.
 
 - **What it gets:** its model (`--model provider/id`), thinking level (`--thinking`) and approval mode
-  (`--approval-mode`: Ask, Write, Full access = yolo, omp's own default) from Settings; the brief as its first
-  message; its status (working, needs you, done) from omp's own OSC 7501 reports; its session found
-  (`~/.omp/agent/sessions`) so `resume` and a restart after a crash continue it (`--resume <its log>`); the session
-  note as an omp extension; a read-only reviewer (`omp --tools read,grep,find,glob,ast_grep`: no bash, so it reads the diff its prompt
-  gives it and runs no checks); a Reviewer left
-  unset runs Claude Code.
-- **What it lacks:** question, permission and plan cards (omp asks in its terminal: the task shows Needs you, answer
-  there); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so;
-  a mode set only in omp's own config isn't seen); usage limits and a
-  backup agent taking over; its chat read back in the chat view (its terminal shows it); the Assistant's model menu
-  switching a running omp agent.
+  (`--approval-mode`: Ask, Write, Full access = yolo, omp's own default and Shepherdr's) from Settings; the brief as its
+  first message; its status (working, needs you, done) from omp's own OSC 7501 reports; its session found
+  (`~/.omp/agent/sessions`) so `resume`, a restart from the model menu and a restart after a crash continue it
+  (`--resume`); the session note as an omp extension; a read-only reviewer (`omp --tools read,grep,find,glob,ast_grep`:
+  no bash, so it reads the diff its prompt gives it and runs no checks); a Reviewer left unset runs Claude Code.
+- **Its chat (ASH-16):** the chat reads omp's own log the way it reads Claude Code's and Codex's: by the process, never
+  by folder or time. omp holds its session file open while it runs (`~/.omp/agent/sessions/<folder>/<when>_<id>.jsonl`)
+  and its owner lock (`~/.omp/run/session-owners/<id>.lock`): the chat takes the file the agent's process (or a child)
+  holds, else the log its lock names; one holding neither hasn't started its session yet (an empty chat until its first
+  message). So two omp agents in one folder never share a chat. Not `PI_SESSION_FILE` (only its tools' environment has
+  it, and `/new` changes the file under the same process) nor the newest file in the folder. Its messages, the commands
+  and calls it runs (one row of steps, its own words for each), its questions (the ask tool, with their options: up to
+  omp 18.18.2 its `questions[]`, from 18.18.3 its HTML form's legends and labels; the words you write there show as your
+  message) and the end of each turn (stop, error, interrupted, out of tokens) show as Claude Code's and Codex's do, in
+  the window and on the web; the / list has omp's commands.
+- **What it lacks:** question, permission and plan cards (omp asks in its terminal: the task or Assistant shows Needs
+  you, answer there; while it asks, what you send from the chat is held, "Not sent", and goes once you press it again
+  after answering: typed into its list of options it would pick one); Rewind and Fork under its messages (its
+  `/branch` and `/fork` are menus of its own: use its
+  terminal); its own herdr-task commands always allowed (under Ask or Write omp asks for them, and its brief says so;
+  a mode set only in omp's own config isn't seen); usage limits and a backup agent taking over; background shells
+  above the box.
+
+## A new Assistant's permission mode
+
+A new Assistant starts on Claude Code's **Auto** (`--permission-mode auto`), not Claude Code's own default mode, which
+stops on "Allow / Deny" before each command, and an Assistant runs read-only ones all the time (`herdr-task show`,
+`gh pr list`, `git status`). On omp it starts on Full access (`--approval-mode yolo`), on Codex on Auto. Settings ›
+Agents › Assistant › its model menu › Permissions picks another (Ask, Auto, Accept edits, Plan, Full access) for every
+space or one; an Assistant's empty chat and the New space dialog start from it. The assistant template's own command
+(`templates/assistant.md`: `claude --permission-mode auto`) is what an Assistant started without a pick runs (from the
+web, a new space without the window). Workers and the Reviewer keep their CLI's own default.
+
+The mode is a flag an Assistant starts with: one already running keeps its own until it starts again. A restart from
+its model menu keeps the mode it has unless Permissions picks another; a new Assistant (a new space, or a chat whose
+Assistant ended) gets the new default.
 
 ## Where they're kept, and how they travel
 

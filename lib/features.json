@@ -694,6 +694,49 @@
       ]
     },
     {
+      "id": "assistant-cli",
+      "addon": "assistants",
+      "title": "The Assistant on Claude Code, Codex or omp, without asking before each command",
+      "core": [
+        "chat-log",
+        "chat-reader",
+        "agents",
+        "settings",
+        "slash",
+        "chat-view"
+      ],
+      "herdr": {
+        "mods": [
+          "chat",
+          "pane-chat",
+          "shepherdr-settings",
+          "chat-models"
+        ]
+      },
+      "web": {
+        "files": [
+          "plugins/chat/client.tsx",
+          "plugins/chat/rows.tsx",
+          "plugins/terminal/client.tsx",
+          "src/screens/Role.tsx",
+          "src/restart.tsx"
+        ]
+      },
+      "forms": {
+        "herdr": "omp in the Assistant's model menu, New space and Settings; its chat reads omp's log (messages, commands, its questions, turn end); a new Assistant starts on Auto (Claude Code) or Full access (omp), Settings › Agents › Assistant › Permissions to change",
+        "desktop": "Same chat for an omp Assistant or tab; Settings › Agents › Assistant's model menu, Permissions",
+        "tablet": "Same",
+        "phone": "Same; the model menu as a sheet"
+      },
+      "service": [
+        "chats.ts",
+        "agents.ts",
+        "compat.ts",
+        "settings.ts",
+        "actions.ts"
+      ]
+    },
+    {
       "id": "news",
       "addon": "assistants",
       "title": "Task news",

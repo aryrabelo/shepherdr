@@ -21,11 +21,23 @@ export const CODEX = [
   ["mcp", "List MCP tools"], ["resume", "Resume another conversation"], ["fork", "Fork this conversation"],
   ["logout", "Sign out"], ["quit", "Exit Codex"],
 ];
+// omp's own (its built-in slash commands, the ones a chat would send).
+export const OMP = [
+  ["model", "Switch the model"], ["new", "Start a new session"], ["resume", "Resume another session"], ["clear", "Clear the context, keeping the session"],
+  ["compact", "Summarize the conversation to free context"], ["context", "Show context use"], ["plan", "Turn plan mode on or off"],
+  ["goal", "Turn goal mode on or off"], ["fast", "Turn fast service on or off"], ["todo", "Show or change its todo list"], ["jobs", "Show background jobs"],
+  ["tree", "Go to another branch of the session"], ["branch", "Go back to an earlier message"], ["fork", "Fork this session"], ["rename", "Rename the session"],
+  ["copy", "Copy text or code from the conversation"], ["export", "Export the session to HTML"], ["share", "Share the session by a link"],
+  ["session", "Session info"], ["usage", "Show provider usage and limits"], ["settings", "Open settings"], ["mcp", "Manage MCP servers"],
+  ["login", "Sign in"], ["logout", "Sign out"], ["hotkeys", "Show keyboard shortcuts"], ["exit", "Exit omp"],
+];
 // Commands that open a menu in the CLI when given no arguments.
 export const MENU = {
   claude: new Set(["agents", "config", "doctor", "effort", "export", "hooks", "login", "mcp", "memory", "model", "permissions", "plugin", "resume", "rewind", "status", "theme", "usage"]),
   codex: new Set(["model", "approvals", "review", "mention", "resume", "fork", "status", "diff"]),
+  omp: new Set(["model", "resume", "tree", "branch", "copy", "settings", "login", "logout", "context", "hotkeys"]),
 };
+const LISTS = { claude: CLAUDE, codex: CODEX, omp: OMP };
 
 // The person's own commands and skills, on the agent's machine: "name<TAB>description" lines.
 export const SCAN = `
@@ -47,7 +59,7 @@ export function scanned(stdout) {
 
 // Every command an agent knows, its CLI's first: [{ name, about }]. mine: the person's own (Claude Code only).
 export function commandList(kind, mine = []) {
-  const list = (kind === "codex" ? CODEX : CLAUDE).map(([name, about]) => ({ name, about }));
+  const list = (LISTS[kind] ?? CLAUDE).map(([name, about]) => ({ name, about }));
   if (kind !== "claude") return list;
   const seen = new Set(list.map((c) => c.name));
   return [...list, ...mine.filter((c) => !seen.has(c.name) && seen.add(c.name))];
@@ -72,6 +84,6 @@ export function opensMenu(kind, text) {
   if (!m) return null;
   if (MENU[kind]?.has(m[1])) return m[1];
   // The CLI completes a prefix to its first match ("/mo" runs /model).
-  const all = (kind === "codex" ? CODEX : CLAUDE).map(([n]) => n).filter((n) => n.startsWith(m[1]));
+  const all = (LISTS[kind] ?? CLAUDE).map(([n]) => n).filter((n) => n.startsWith(m[1]));
   return all.length && MENU[kind]?.has(all[0]) ? all[0] : null;
 }

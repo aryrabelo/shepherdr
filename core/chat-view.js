@@ -121,10 +121,14 @@ export function clock(at, now = new Date()) {
   return d.toDateString() === now.toDateString() ? hm : `${d.getDate()} ${MONTHS[d.getMonth()]} ${hm}`;
 }
 
+// Whether the chat can drive a CLI's own rewind (Claude Code's /rewind, Codex's Esc Esc) and fork (claude
+// --fork-session, codex fork): not omp's, whose /branch and /fork are menus of its own with no flag to start one.
+export const rewinds = (cli) => cli === "claude" || cli === "codex";
+
 // The actions under a message, in order: reply and copy; then the CLI's rewind on your own (not a /command, not one
-// another agent sent), or its fork on the agent's (when the CLI is known).
-export function bandActs(side, text, { from = null, fork = true } = {}) {
-  if (side === "user") return ["reply", "copy", ...(/^\//.test(String(text ?? "")) || from ? [] : ["rewind"])];
+// another agent sent), or its fork on the agent's (when the CLI is known and has them: rewinds()).
+export function bandActs(side, text, { from = null, fork = true, rewind = true } = {}) {
+  if (side === "user") return ["reply", "copy", ...(!rewind || /^\//.test(String(text ?? "")) || from ? [] : ["rewind"])];
   return ["reply", "copy", ...(fork ? ["fork"] : [])];
 }
 
@@ -387,7 +391,7 @@ function parentAddr(k) {
   return m && !p.includes("/") ? `${m}/${p}` : p;
 }
 
-const AGENTS = { codex: "Codex", claude: "Claude Code", "claude-code": "Claude Code", pi: "Pi" };
+const AGENTS = { codex: "Codex", claude: "Claude Code", "claude-code": "Claude Code", pi: "Pi", omp: "omp" };
 // its CLI: its herdr.agent label, else what hc says runs in it, else its command's name
 export function subagentCli(k) {
   const a = k?.labels?.["herdr.agent"] ?? k?.agent ?? null;

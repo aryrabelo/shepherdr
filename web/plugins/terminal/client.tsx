@@ -321,9 +321,9 @@ function PlaceTerm({ place }: { place: Place }) {
             )
           })
         : null}
-      {/* the shown tab's Chat | Terminal, as the same two choices (another tab's: Claude Code's and Codex's) */}
+      {/* the shown tab's Chat | Terminal, as the same two choices (another tab's: Claude Code's, Codex's and omp's) */}
       {other ? (
-        ['claude', 'codex'].includes(place.tabs?.find((t) => t.term === ui.term)?.cli ?? '') ? (
+        ['claude', 'codex', 'omp'].includes(place.tabs?.find((t) => t.term === ui.term)?.cli ?? '') ? (
           <MenuSetting name="Show" icon={<TermIcon className={ic} />} choices={(['chat', 'terminal'] as const).map((v) => ({
             label: v === 'chat' ? 'Chat' : 'Terminal', on: (ui.tabView?.[ui.term!] ?? 'terminal') === v,
             onClick: () => setUI((u) => ({ tabView: { ...u.tabView, [u.term!]: v }, menu: false })),
@@ -350,7 +350,7 @@ function ChatOrTerminal({ place }: { place: Place }) {
   if (shown) {
     // another tab: Claude Code's and Codex's have it too (3.0's pane header: a chat reads their own session logs)
     const tab = place.tabs?.find((t) => t.term === shown)
-    if (!tab || !['claude', 'codex'].includes(tab.cli ?? '')) return null
+    if (!tab || !['claude', 'codex', 'omp'].includes(tab.cli ?? '')) return null
     const chat = view === 'chat'
     const pick = (v: 'chat' | 'terminal') => setUI((ui) => ({ tabView: { ...ui.tabView, [shown]: v }, menu: false, pick: null }))
     return (

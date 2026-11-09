@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LOG, Conversation, records, pilotLine, sendsOf } from "./chat-log.js";
+import { FIND, LOG, Conversation, records, pilotLine, sendsOf, resultText, openAsk, ASK_HELD } from "./chat-log.js";
+import { kindOf } from "./chat-reader.js";
+import { argvFor, ompProgram, sessionOf } from "./agents.js";
 
 // A Claude Code log as LOG reads it, fed to a Conversation.
 async function read(lines) {
@@ -255,4 +257,193 @@ test("a template's example news lines are words, real news lines are news (#589)
   expect(c.items[2]).toMatchObject({ ref: "SHOP-2", event: "ready" });
   // a real tag holding code is still Herdr's: hidden whole, the words around it shown
   expect(c.items[3].text).toBe("And look at `<herdr-news>` too");
+});
+
+// ---- omp (ASH-16) --------------------------------------------------------------------------------------------------
+
+test("two omp agents in one folder each get their own log: the file each process holds, else its lock's", () => {
+  const home = mkdtempSync(join(tmpdir(), "omp-find-")), bin = join(home, "bin");
+  const dir = join(home, ".omp", "agent", "sessions", "-repo");
+  mkdirSync(bin); mkdirSync(dir, { recursive: true }); mkdirSync(join(home, ".omp", "run", "session-owners"), { recursive: true });
+  const A1 = "01a1bd5a-0000-7000-8000-00000000000a", B1 = "01a1bd5a-0000-7000-8000-00000000000b";
+  const a = join(dir, `2026-11-08T10-00-00-000Z_${A1}.jsonl`), b = join(dir, `2026-11-08T10-00-01-000Z_${B1}.jsonl`);
+  writeFileSync(a, ""); writeFileSync(b, ""); // b is the newer: never taken for a
+  // 100: the wrapper's shell (omp-safe), its child 101 the omp holding a (and a subagent's log one folder deeper);
+  // 200: an omp between writes, holding only its lock; 300: an omp with no session yet; 400: between writes too, a
+  // subagent's lock listed before its own (review item 6: every lock is tried)
+  const SUB = "01a1bd5a-0000-7000-8000-0000000000ff";
+  writeFileSync(join(bin, "pgrep"), `#!/bin/sh\n[ "$2" = 100 ] && echo 101\ntrue\n`);
+  writeFileSync(join(bin, "lsof"), `#!/bin/sh
+case "$2" in
+101) printf 'p101\\nn${dir}/2026-11-08T10-00-00-000Z_${A1}/Helper.jsonl\\nn${a}\\nn${home}/.omp/run/session-owners/${A1}.lock\\n' ;;
+200) printf 'p200\\nn/dev/ttys001\\nn${home}/.omp/run/session-owners/${B1}.lock\\n' ;;
+400) printf 'p400\\nn${home}/.omp/run/session-owners/${SUB}.lock\\nn${home}/.omp/run/session-owners/${B1}.lock\\n' ;;
+esac
+true\n`);
+  chmodSync(join(bin, "pgrep"), 0o755); chmodSync(join(bin, "lsof"), 0o755);
+  const find = (pid) => Bun.spawnSync(["sh", "-c", FIND, "find", "omp", String(pid)], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home } }).stdout.toString().trim();
+  try {
+    expect(find(100)).toBe(a);
+    expect(find(200)).toBe(b);
+    expect(find(300)).toBe("pending");
+    expect(find(400)).toBe(b);
+    // Herdr names omp-safe's terminal omp; a wrapper's program name counts too
+    expect(kindOf({ status: { app: "omp" }, foreground: { name: "zsh" } })).toBe("omp");
+    expect(kindOf({ foreground: { name: "omp-safe" } })).toBe("omp");
+    expect(sessionOf("omp", a)).toBe(A1);
+  } finally { rmSync(home, { recursive: true }); }
+});
+
+const ompLine = (role, content, more = {}) => ({ type: "message", id: `m${n++}`, parentId: null, timestamp: at, runtime: { version: "18" }, message: { role, content, ...more } });
+async function readOmp(lines) {
+  const dir = mkdtempSync(join(tmpdir(), "chat-log-omp-"));
+  const f = join(dir, "s.jsonl");
+  writeFileSync(f, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  const out = await new Response(Bun.spawn(["sh", "-c", LOG, "log", "tail", f, "0"], { stdout: "pipe", stderr: "ignore" }).stdout).text();
+  const c = new Conversation("omp");
+  c.feed(records(out).records);
+  return { c, f, dir };
+}
+
+test("an omp log reads as a conversation: messages, its steps, its question, your answer, the turn's end", async () => {
+  const call = (id, name, args, intent) => ({ type: "toolCall", id, name, arguments: args, ...(intent ? { intent } : {}) });
+  const { c, f, dir } = await readOmp([
+    { type: "session", version: 3, id: "x", timestamp: at, cwd: "/repo" },
+    { type: "model_change", id: "1", parentId: null, timestamp: at, model: "anthropic/claude-opus-5-5" },
+    { type: "thinking_level_change", id: "2", parentId: "1", timestamp: at, thinkingLevel: "high" },
+    { type: "custom_message", customType: "eager-todo-prelude", content: "<system-reminder>plan first</system-reminder>", id: "3", parentId: "2", timestamp: at },
+    ompLine("user", [{ type: "text", text: '<hc from="person" reaction="👍" to="Done before"/>\nCheck the tests' }], { attribution: "user" }),
+    ompLine("assistant", [{ type: "thinking", thinking: "hmm", thinkingSignature: "Ep".repeat(4000) }, { type: "text", text: "Looking." },
+      call("t1", "bash", { command: "bun test", i: "Running the tests" }), call("t2", "read", { path: "/repo/core/a.js" }),
+      call("t3", "edit", { input: "[core/a.js#1A2B]\nPUT 1.=1:\n+x\n[core/b.js#3C4D]\nCUT 2.=2\n" })],
+      { model: "claude-opus-5-5", provider: "anthropic", usage: { input: 10, cacheRead: 900, cacheWrite: 80, output: 10 }, stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "3 pass" }], { toolCallId: "t1", toolName: "bash", details: {}, isError: false }),
+    ompLine("toolResult", [{ type: "text", text: "x" }], { toolCallId: "t2", toolName: "read" }),
+    ompLine("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t3", toolName: "edit" }),
+    ompLine("assistant", [call("q1", "ask", { questions: [{ id: "a", question: "Merge it?", options: [{ label: "Yes" }, { label: "No" }] }] })], { stopReason: "toolUse" }),
+  ]);
+  try {
+    expect(c.items.map((x) => x.kind)).toEqual(["user", "agent", "tools", "ask"]);
+    expect(c.items[0].text).toBe("Check the tests");
+    expect(c.items[1].text).toBe("Looking.");
+    expect(c.items[2].steps.map((s) => s.line)).toEqual(["Running the tests: bun test", "Read core/a.js", "Edited core/a.js, core/b.js"]);
+    expect(c.items[3]).toMatchObject({ text: "Merge it?\n- Yes\n- No" });
+    expect(c.doing).toBe("Asking you something");
+    expect(c.meta).toMatchObject({ model: "anthropic/claude-opus-5-5", effort: "high", used: 1000 });
+    // a step's output, fetched when its row opens
+    const off = c.items[2].steps[0].out;
+    const res = Bun.spawnSync(["sh", "-c", LOG, "log", "results", f, String(off)]).stdout.toString().split("\x1e").pop().replace(/^\d+\n/, "");
+    expect(resultText(res, "t1")).toBe("3 pass");
+  } finally { rmSync(dir, { recursive: true }); }
+  // the answer: words typed show as yours, an option picked doesn't; then its reply ends the turn
+  const done = await readOmp([
+    ompLine("assistant", [call("q1", "ask", { questions: [{ id: "a", question: "Merge it?", options: [{ label: "Yes" }] }] })], { stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "User provided custom input: after the checks" }], { toolCallId: "q1", toolName: "ask",
+      details: { question: "Merge it?", options: ["Yes"], selectedOptions: [], customInput: "after the checks" } }),
+    ompLine("assistant", [{ type: "text", text: "Merging after the checks." }], { stopReason: "stop" }),
+    ompLine("user", [{ type: "text", text: "stop" }]),
+    ompLine("assistant", [call("t9", "bash", { command: "sleep 600" })], { stopReason: "toolUse" }),
+    ompLine("assistant", [], { stopReason: "aborted", errorMessage: "Interrupted by user" }),
+  ]);
+  try {
+    const items = done.c.items;
+    expect(items.map((x) => x.kind)).toEqual(["ask", "user", "agent", "user", "tools"]);
+    expect(items[0].closed).toBe("answered");
+    expect(items[1]).toMatchObject({ text: "after the checks", answer: true });
+    expect(done.c.doing).toBeNull();
+    expect(done.c.open.size).toBe(0);
+  } finally { rmSync(done.dir, { recursive: true }); }
+});
+
+test("an omp agent restarts on its session and its own program (omp-safe stays)", () => {
+  const argv = ["/bin/zsh", "/usr/local/bin/omp-safe", "--model", "a/b", "--approval-mode", "yolo"];
+  expect(ompProgram(argv)).toBe("/usr/local/bin/omp-safe");
+  expect(argvFor({ agent: "omp", model: "a/c", perm: "yolo" }, { agent: "omp", argv, session: "S1" }))
+    .toEqual({ argv: ["/usr/local/bin/omp-safe", "--model", "a/c", "--approval-mode", "yolo", "--resume", "S1"], resume: true, base: ["/usr/local/bin/omp-safe", "--model", "a/c", "--approval-mode", "yolo"] });
+  // from another CLI: plain omp, a new session
+  expect(argvFor({ agent: "omp", model: "a/c" }, { agent: "claude", argv: ["claude"], session: "S2" })).toMatchObject({ argv: ["omp", "--model", "a/c"], resume: false });
+});
+
+// ---- the ASH-16 review ---------------------------------------------------------------------------------------------
+
+const askCall = (id, args) => ({ type: "toolCall", id, name: "ask", arguments: args });
+
+test("omp's ask reads in both shapes: 18.18.2's questions[] and 18.18.3's HTML form, with their answers (review 1)", async () => {
+  // omp 18.18.2: questions[] with options; its answer { selectedOptions, customInput }
+  const old = await readOmp([
+    ompLine("assistant", [askCall("q1", { i: "Asking", questions: [{ id: "db", question: "Which database?", options: [{ label: "Postgres" }, { label: "SQLite" }] }] })], { stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "User selected: Postgres" }], { toolCallId: "q1", toolName: "ask",
+      details: { question: "Which database?", options: ["Postgres", "SQLite"], multi: false, selectedOptions: ["Postgres"] } }),
+  ]);
+  try {
+    expect(old.c.items.map((x) => x.kind)).toEqual(["ask"]);
+    expect(old.c.items[0]).toMatchObject({ text: "Which database?\n- Postgres\n- SQLite", closed: "answered" });
+  } finally { rmSync(old.dir, { recursive: true }); }
+  // omp 18.18.3: one HTML form; its answer details.answers[{ name, question, answer }]: picks are no message, words are
+  const html = `<form>
+  <fieldset>
+    <legend>Which database should the new service use?</legend>
+    <label><input type="radio" name="db" value="postgres" checked> Postgres: relational, JSONB support</label>
+    <label><input type="radio" name="db" value="sqlite"> SQLite: embedded, zero-ops</label>
+  </fieldset>
+  <fieldset>
+    <legend>Which auth flows should ship in v1?</legend>
+    <label><input type="checkbox" name="auth" value="password" checked> Email + password</label>
+    <label><input type="checkbox" name="auth" value="oauth"> OAuth (Google, GitHub)</label>
+  </fieldset>
+  <fieldset><legend>Anything else?</legend><label>Notes <textarea name="notes"></textarea></label></fieldset>
+</form>`;
+  const now = await readOmp([
+    ompLine("assistant", [askCall("q2", { i: "Asking", html })], { stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "User answers: …" }], { toolCallId: "q2", toolName: "ask", details: { answers: [
+      { name: "db", question: "Which database should the new service use?", answer: "Postgres: relational, JSONB support" },
+      { name: "auth", question: "Which auth flows should ship in v1?", answer: "Email + password, OAuth (Google, GitHub)" },
+      { name: "notes", question: "Anything else?", answer: "use the staging cluster" }] } }),
+  ]);
+  try {
+    expect(now.c.items.map((x) => x.kind)).toEqual(["ask", "user"]);
+    expect(now.c.items[0].text).toBe("Which database should the new service use?\n- Postgres: relational, JSONB support\n- SQLite: embedded, zero-ops\n\n"
+      + "Which auth flows should ship in v1?\n- Email + password\n- OAuth (Google, GitHub)\n\nAnything else?\n- Notes");
+    expect(now.c.items[0].closed).toBe("answered");
+    expect(now.c.items[1]).toMatchObject({ text: "use the staging cluster", answer: true });
+  } finally { rmSync(now.dir, { recursive: true }); }
+  // 18.18.3 cancelled: no answers, dismissed
+  const gone = await readOmp([
+    ompLine("assistant", [askCall("q3", { html })], { stopReason: "toolUse" }),
+    ompLine("toolResult", [{ type: "text", text: "Prompt cancelled by user before any answer was given" }], { toolCallId: "q3", toolName: "ask", details: { answers: [] } }),
+  ]);
+  try { expect(gone.c.items[0].closed).toBe("dismissed"); } finally { rmSync(gone.dir, { recursive: true }); }
+});
+
+test("while omp asks in its terminal, the chat holds what's typed, window and web (review 2)", async () => {
+  const asking = await readOmp([ompLine("assistant", [askCall("q4", { html: "<fieldset><legend>Go?</legend><label>Yes</label></fieldset>" })], { stopReason: "toolUse" })]);
+  try {
+    expect(openAsk(asking.c)?.text).toBe("Go?\n- Yes");
+    // answered (or its turn gone): sends again
+    asking.c.feed(records(`T 0 0 0\n9999\tJ\t${JSON.stringify(ompLine("toolResult", [], { toolCallId: "q4", toolName: "ask", details: { answers: [{ name: "a", question: "Go?", answer: "Yes" }] } }))}`).records);
+    expect(openAsk(asking.c)).toBeNull();
+  } finally { rmSync(asking.dir, { recursive: true }); }
+  // only omp's: Claude Code's and Codex's questions have cards that the typed words answer
+  const claude = new Conversation("claude");
+  claude.items.push({ kind: "ask", id: "q", text: "?" });
+  expect(openAsk(claude)).toBeNull();
+  const ROOT = join(import.meta.dir, "..");
+  expect(readFileSync(join(ROOT, "mods/chat/main.js"), "utf8")).toContain("if (openAsk(this.conv)) { p.failed = ASK_HELD;");
+  expect(readFileSync(join(ROOT, "service/actions.ts"), "utf8")).toContain("if (openAsk(compat.reader?.(a)?.conv)) throw new Error(ASK_HELD);");
+  expect(ASK_HELD).toMatch(/terminal/);
+});
+
+test("an omp turn that runs out of tokens ends (review 3)", async () => {
+  const { c, dir } = await readOmp([
+    ompLine("user", [{ type: "text", text: "go" }]),
+    ompLine("assistant", [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } }], { stopReason: "toolUse" }),
+    ompLine("assistant", [askCall("q5", { questions: [{ question: "More?", options: [{ label: "Yes" }] }] }), { type: "text", text: "Cut short" }], { stopReason: "length" }),
+  ]);
+  try {
+    expect(c.doing).toBeNull();
+    expect(c.open.size).toBe(0);
+    // the question it left with the turn is gone: sends aren't held for it
+    expect(c.items.find((x) => x.kind === "ask").closed).toBe("dismissed");
+    expect(openAsk(c)).toBeNull();
+  } finally { rmSync(dir, { recursive: true }); }
 });

@@ -104,7 +104,7 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
     />
   ) : null
   // its band: what you just sent gets one once it's in the conversation; the agent's newest waits while it writes
-  const band = msg.text && !msg.card && !art && !out && !writing && !msg.waiting ? <Band msg={msg} chat={chat.key} cli={chat.cli !== ''} /> : null
+  const band = msg.text && !msg.card && !art && !out && !writing && !msg.waiting ? <Band msg={msg} chat={chat.key} cli={chat.cli} /> : null
   const unit = (anchor: ReactNode, quoted?: boolean) => (
     <div
       data-msg={msg.id}
@@ -1347,7 +1347,7 @@ function askHead(q: Question, chat: Chat) {
   // a task worker's, in its Assistant's chat: headed by its task, its own chat a link (no terminal link)
   if (q.by) return { who: q.by.ref, links: [{ label: 'Open chat', fn: () => goChat(q.by!.chat) }, ...last], dismiss }
   const terminal = () => void act({ type: 'answer', chat: chat.key, question: q.id, terminal: true } as never).then(() => openTerminal(chat.key), () => undefined)
-  return { who: chat.cli === 'codex' ? 'Codex' : 'Claude', links: [{ label: 'Answer in terminal', fn: terminal }, ...last], dismiss }
+  return { who: chat.cli === 'codex' ? 'Codex' : chat.cli === 'omp' ? 'omp' : 'Claude', links: [{ label: 'Answer in terminal', fn: terminal }, ...last], dismiss }
 }
 
 /** a questions card's "Chat about this": no answer; the agent hears the person wants to talk it over, and the box
@@ -2810,7 +2810,7 @@ function placeholderOf(chatKey: string, chat: Chat | undefined, fallback: string
   if (chatKey.startsWith('p:')) return 'Message the Assistant'
   const task = taskChatId(chatKey)
   if (task) return `Message ${task}`
-  return chatKey.startsWith('t:') ? `Message ${({ claude: 'Claude Code', codex: 'Codex' } as Record<string, string>)[chat?.cli ?? ''] ?? 'the agent'}` : fallback
+  return chatKey.startsWith('t:') ? `Message ${({ claude: 'Claude Code', codex: 'Codex', omp: 'omp' } as Record<string, string>)[chat?.cli ?? ''] ?? 'the agent'}` : fallback
 }
 
 /** a task whose agent has ended: the window's line and its Resume, in place of the message box */

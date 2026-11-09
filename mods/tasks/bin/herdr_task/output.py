@@ -4,6 +4,7 @@ import json
 import os
 
 from .base import now
+from .settings import WRAPPERS
 from .agents import (
     agent_running, detail, live_helpers, ask_reason, held_ask, last_words, own_line, own_work, rest_now, status_word, STATUSES,
     task_status,
@@ -58,7 +59,8 @@ def subagent(k):
     st = k.get("status")
     st = st.get("state") if isinstance(st, dict) else st
     ag = str(k.get("agent") or "")
-    cli = lb.get("herdr.agent") or ("codex" if "codex" in ag else "omp" if os.path.basename(ag) == "omp" else "claude" if ag else None)
+    prog = WRAPPERS.get(os.path.basename(ag), os.path.basename(ag))  # omp-safe is omp
+    cli = lb.get("herdr.agent") or ("codex" if "codex" in ag else "omp" if prog == "omp" else "claude" if ag else None)
     return {"address": k["address"], "parent": k.get("parent"), "role": lb.get("herdr.role") or "helper", "agent": cli,
             "name": k.get("name"), "status": "working" if st == "working" else "needs" if st == "blocked" else "done",
             "at": k.get("created_ms")}

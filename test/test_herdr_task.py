@@ -2379,6 +2379,20 @@ class OmpAgent(unittest.TestCase):
         # omp's words for a session that's gone
         self.assertTrue(revive.LOST.search('Error: Session "01a1b208-c3e3" not found.'))
 
+    def test_omp_safe_is_omp(self):
+        """ASH-16 review: the omp-safe wrapper (its shell's argv, as Herdr shows it) is omp to revive and to the
+        helpers list, as to agent_key."""
+        import herdr_task.revive as revive
+        import herdr_task.output as output
+        from herdr_task.settings import agent_key
+        argv = ["/bin/zsh", "/usr/local/bin/omp-safe", "--model", "m", "--resume", "/old.jsonl", "Hi"]
+        self.assertEqual(revive.kind_of("/usr/local/bin/omp-safe"), "omp")
+        self.assertEqual(revive.base_argv(argv), ("omp", ["/usr/local/bin/omp-safe", "--model", "m"]))
+        self.assertEqual(agent_key(["omp-safe", "--model", "m"]), "omp")
+        self.assertEqual(output.subagent({"address": "t1", "agent": "/usr/local/bin/omp-safe", "labels": {}})["agent"], "omp")
+        self.assertEqual(output.subagent({"address": "t2", "agent": "omp", "labels": {}})["agent"], "omp")
+        self.assertIsNone(revive.kind_of("/bin/zsh"))
+
     def test_its_running_session_is_found(self):
         log = self.omp_log(self.sid, self.at, "hi")
 
