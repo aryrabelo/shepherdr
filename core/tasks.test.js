@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { place, queueReason, reportOf, estimated, order, ago, autoPrefix, refOf, taskKey, matches, busyAgain, secondLine, leftOf, ORDER, STATUS, WORKING_AGAIN, fromLine, autoWhere, inSpace } from "./tasks.js";
+import { place, queueReason, reportOf, estimated, order, ago, autoPrefix, refOf, taskKey, matches, busyAgain, secondLine, leftOf, ORDER, STATUS, WORKING_AGAIN, fromLine, autoWhere, inSpace, briefStatus } from "./tasks.js";
 import { REASONS, fit } from "./needs.js";
 
 const NOW = 1_800_000_000_000;
@@ -199,5 +199,29 @@ describe("the Próximo line (ASH-13, aryrabelo/hq's threads)", () => {
   test("without one, as before", () => {
     expect(secondLine(p("working", {}, { next: undefined }), { text: "Reading files" })).toBe("why");
     expect(secondLine({ section: "working", why: null, task: { id: 1 } }, { text: "Reading files" })).toBe("Reading files");
+  });
+});
+
+describe("ASH-14 review: Jump's short status (briefStatus) (item 2)", () => {
+  const NOW = 1_800_000_000_000;
+  test("a stopped or queued task settled with no live agent says Settled, not Needs you", () => {
+    const stopped = { id: 1, state: "running", started: NOW - 600_000, settled_at: NOW - 1000, agents: [{ address: "t1", at: NOW - 600_000, ended: NOW - 2000 }] };
+    expect(briefStatus(stopped, [], NOW)).toBe("settled");
+    expect(briefStatus({ ...stopped, state: "queued" }, [], NOW)).toBe("settled");
+    // new work since: back to what it is
+    expect(briefStatus({ ...stopped, attention: "Checks failing", attention_at: NOW - 500 }, [], NOW)).toBe("needs");
+    expect(briefStatus({ ...stopped, settled_at: undefined }, [], NOW)).toBe("needs");
+    expect(briefStatus({ ...stopped, settled_at: undefined, state: "queued" }, [], NOW)).toBe("queued");
+    expect(briefStatus({ ...stopped, state: "done" }, [], NOW)).toBe("done");
+  });
+  test("with live agents: their labels, then the usual words", () => {
+    const t = { id: 1, state: "running", started: NOW - 600_000, agents: [{ address: "t1", at: NOW - 600_000 }] };
+    const a = (more = {}) => ({ address: "t1", status: "idle", turn: 3, role: "worker", settled: null, snoozed: null, ...more });
+    expect(briefStatus(t, [a({ settled: `${NOW}:3` })], NOW)).toBe("settled");
+    expect(briefStatus(t, [a({ snoozed: String(NOW + 60_000) })], NOW)).toBe("snoozed");
+    expect(briefStatus(t, [a({ status: "working" })], NOW)).toBe("working");
+    expect(briefStatus(t, [a({ status: "blocked" })], NOW)).toBe("needs");
+    expect(briefStatus({ ...t, state: "ready" }, [a()], NOW)).toBe("ready");
+    expect(briefStatus(t, [a()], NOW)).toBe("needs");
   });
 });

@@ -4,22 +4,25 @@
 // red dot when its health couldn't be read; not: "Offline" or "Connecting…", dimmed and folded until tapped open), its
 // spaces in no section, then its sections. A space's row: its # (or emoji), its name (bold while its Assistant has
 // something new, dimmed with a crossed-out bell when muted), after it only what's unusual (its machine in Pinned, its
-// folder where another space there has its name, its repo and branch), and its red and green counts.
-// Worktree spaces nest under their repo's own. A folded section (Pinned too) still shows the space you're in and its
+// folder where another space there has its name, its repo and branch), and its red and green counts. Under it its
+// threads (ASH-14, core/threads.js): its tasks at work or waiting on someone and the agents of its own in its tabs, then
+// its Snoozed and Settled shelves. Worktree spaces nest under their repo's own. A folded section (Pinned too) still shows the space you're in and its
 // unread ones, and adds up its counts on its heading. Menus are core/menus.js's, the window's too: a right click (or a
 // finger held) opens them, no ⋯ on the rows. Spaces drag among their own, into a section or Pinned, or back to their machine's
 // top; machines and sections keep their place. Alt+↑/↓ goes to the space above or below as they show.
 import clsx from 'clsx'
 import { openWorktree } from '@client/screens/Worktree.tsx'
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type LiHTMLAttributes, type ReactNode } from 'react'
-import { act, counts, definePlugin, getState, goPlace, manyMachines, openSplit, placeOf, removeSpace, setUI, splitClick, useSnap, useUI, type Pane, type UI } from '@client/kernel.ts'
-import { Dialog, RowMenu, useRowMenu } from '@client/rowmenu.tsx'
-import { AutopilotIcon, BackIcon, BellIcon, CogIcon, BellSlashIcon, AttentionBadge, attentionWords, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, ModelIcon, MonitorIcon, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TasksIcon, UnpinIcon } from '@client/ui.tsx'
+import { act, counts, definePlugin, getState, goPlace, has, manyMachines, openSplit, openTask, placeOf, removeSpace, setUI, splitClick, taskChat, useRestNow, useSnap, useUI, type Pane, type UI } from '@client/kernel.ts'
+import { Dialog, RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
+import { AutopilotIcon, BackIcon, BellIcon, CheckIcon, ClockIcon, CogIcon, BellSlashIcon, AttentionBadge, attentionWords, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, ModelIcon, MonitorIcon, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TaskDot, TasksIcon, UnpinIcon } from '@client/ui.tsx'
+import { placeThreads, threadTabShown, type Thread } from '@client/threads.ts'
+import { restMenu, useRest } from '@plugins/tasks/rest.tsx'
 import { HealthDot, MachineMeter } from '@plugins/health/client.tsx'
 import { toast } from '@plugins/alerts/toasts.tsx'
 import { MarkRead, markPlaceRead, muted, placeUnread } from '@client/unread.ts'
 import { RestartItem } from '@client/restart.tsx'
-import { NOTIFY, NOTIFY_KEY, notifyOf, notifyRow } from '@shared/alerts.ts'
+import { NOTIFY, NOTIFY_KEY, notifyOf, notifyRow, taskWho } from '@shared/alerts.ts'
 import { kept, PINNED, sectionsIn, TOP, type PlaceOrder } from '@shared/order.ts'
 import { machineName, NAME_MAX, nameProblem, slugify, type Machine, type Place, type Section, type Snapshot } from '@shared/types.ts'
 import { AddSpace, asTyped, openAddSpace } from './add.tsx'
@@ -28,6 +31,8 @@ import { openNewSection, openRename, SectionDialogs } from './section.tsx'
 import * as MN from '@core/menus.js'
 import * as CF from '@core/confirm.js'
 import * as SPc from '@core/spaces.js'
+import * as THc from '@core/threads.js'
+import * as TKc from '@core/tasks.js'
 
 /* ---------- folded sections (Pinned, the machines), remembered on this device ---------- */
 
@@ -560,40 +565,143 @@ function Space({ p, snap, sort, at }: { p: Place; snap: Snapshot; sort: Sort; at
   // its menu opens whatever its machine is doing, as the window's right-click
   const still = rename.editing
   return (
-    <li
-      data-machine={top ? undefined : `m:${p.machine}`}
-      data-section={at === 'machine' ? undefined : group}
-      data-project={p.id}
-      data-pin={group === PINNED ? p.id : undefined}
-      data-home={p.home || undefined}
-      data-drop={group}
-      className={clsx(rowClass(r.sel, false, true), dragged, dropBefore, indent[at], treeMark.get(p.id) && 'pl-[51px] phone:pl-[56px]', 'group select-none [-webkit-touch-callout:none]', menu.open && !r.sel && 'bg-hover')}
-      onPointerDown={
-        rename.editing
-          ? undefined
-          : (e) =>
-              press(e, {
-                id: p.id,
-                siblings: sort.ids,
-                level: 'project',
-                drop: (ids) => reorder(group, ids),
-                into: { group, may: (g) => mayGo(snap, p, g), go: (g, before) => moveTo(p.id, g, before) },
-                hold: menu.hold, lift: menu.close, release: menu.release,
-              })
-      }
-      onContextMenu={still ? undefined : (e) => (dragging() ? e.preventDefault() : menu.press.onContextMenu(e))}
-    >
-      {r.mark}
-      {rename.box ?? (
-        <Go p={p} said={r.said} sel={r.sel} sort={sort} onClick={(e) => !menu.held() && openPlace(p.id, e)}>
-          {r.name}
-        </Go>
-      )}
-      {r.end}
-      {menu.open ? (
-        <PlaceMenu p={p} snap={snap} menu={menu} unread={r.fresh} onClose={() => setRemoving(p)} />
+    <>
+      <li
+        data-machine={top ? undefined : `m:${p.machine}`}
+        data-section={at === 'machine' ? undefined : group}
+        data-project={p.id}
+        data-pin={group === PINNED ? p.id : undefined}
+        data-home={p.home || undefined}
+        data-drop={group}
+        className={clsx(rowClass(r.sel, false, true), dragged, dropBefore, indent[at], treeMark.get(p.id) && 'pl-[51px] phone:pl-[56px]', 'group select-none [-webkit-touch-callout:none]', menu.open && !r.sel && 'bg-hover')}
+        onPointerDown={
+          rename.editing
+            ? undefined
+            : (e) =>
+                press(e, {
+                  id: p.id,
+                  siblings: sort.ids,
+                  level: 'project',
+                  drop: (ids) => reorder(group, ids),
+                  into: { group, may: (g) => mayGo(snap, p, g), go: (g, before) => moveTo(p.id, g, before) },
+                  hold: menu.hold, lift: menu.close, release: menu.release,
+                })
+        }
+        onContextMenu={still ? undefined : (e) => (dragging() ? e.preventDefault() : menu.press.onContextMenu(e))}
+      >
+        {r.mark}
+        {rename.box ?? (
+          <Go p={p} said={r.said} sel={r.sel} sort={sort} onClick={(e) => !menu.held() && openPlace(p.id, e)}>
+            {r.name}
+          </Go>
+        )}
+        {r.end}
+        {menu.open ? (
+          <PlaceMenu p={p} snap={snap} menu={menu} unread={r.fresh} onClose={() => setRemoving(p)} />
+        ) : null}
+      </li>
+      {/* its threads (ASH-14), under it */}
+      <Threads p={p} snap={snap} at={at} group={group} />
+    </>
+  )
+}
+
+/* ---------- a space's threads (ASH-14), under its row ---------- */
+
+const SHELF = THc.SHELF as { snoozed: string; settled: string; folded: (n: number) => string }
+const settledOpenKey = THc.settledOpenKey as (space: string) => string
+const capital = TKc.capital as (s: string) => string
+
+/** a thread's dot and title sit in under its space's #, its second line under its title */
+const threadIndent = {
+  top: 'pl-[55px] phone:pl-[60px]',
+  machine: 'pl-[55px] phone:pl-[60px]',
+  inner: 'pl-[67px] phone:pl-[72px]',
+}
+
+/** Under a space's row its threads, as the window's (core/threads.js): its tasks at work or waiting on someone and the
+ *  agents of its own in its tabs; what needs you, then what's at work, then the rest by latest activity; then Snoozed (its
+ *  heading and rows, the soonest to wake first) and Settled, folded to "3 settled" until tapped open (kept on this
+ *  device, in the folds). A row put away (or back) from here moves at once (threads.ts marks). The threads follow their
+ *  space's row: hidden with it, lifted with it when it drags. They are the tasks add-on's (herdr-task settles them). */
+function Threads({ p, snap, at, group }: { p: Place; snap: Snapshot; at: 'top' | 'machine' | 'inner'; group: string }) {
+  const marks = useRestNow()
+  const openKey = settledOpenKey(p.id)
+  const open = useUI((u) => u.shut.includes(openKey))
+  const { open: rows, snoozed, settled } = placeThreads(snap, p, marks)
+  if (!has('tasks') || (!rows.length && !snoozed.length && !settled.length)) return null
+  const pad = treeMark.get(p.id) ? 'pl-[73px] phone:pl-[78px]' : threadIndent[at]
+  // what drags its space's row drags these too (drag.ts takes every row with its data-project)
+  const data = { 'data-machine': at === 'top' ? undefined : `m:${p.machine}`, 'data-section': at === 'machine' ? undefined : group, 'data-project': p.id }
+  const row = (t: Thread) => <ThreadRow key={t.key} t={t} p={p} snap={snap} pad={pad} data={data} />
+  const toggle = () => setUI((u) => ({ shut: u.shut.includes(openKey) ? u.shut.filter((x) => x !== openKey) : [...u.shut, openKey] }))
+  return (
+    <>
+      {rows.map(row)}
+      {snoozed.length ? (
+        <li {...data} className={clsx(dragged, pad, 'flex min-h-6 items-end pb-0.5 text-[0.75rem] font-medium text-fg3 select-none phone:min-h-8 phone:text-[0.8125rem]')}>
+          <h3>{SHELF.snoozed}</h3>
+        </li>
       ) : null}
+      {snoozed.map(row)}
+      {settled.length ? (
+        <li {...data} className={clsx(dragged, pad, 'flex min-h-6 items-center select-none phone:min-h-8')}>
+          <button type="button" aria-expanded={open} onClick={toggle}
+            className="press-dim flex min-w-0 cursor-pointer items-center gap-1 rounded-row text-[0.75rem] font-medium text-fg3 outline-none hover:text-fg2 keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--focus)] phone:text-[0.8125rem]">
+            {open ? <DownIcon aria-hidden className="size-3 phone:size-3.5" /> : <NextIcon aria-hidden className="size-3 phone:size-3.5" />}
+            {open ? SHELF.settled : SHELF.folded(settled.length)}
+          </button>
+        </li>
+      ) : null}
+      {open ? settled.map(row) : null}
+    </>
+  )
+}
+
+/** One thread: its status dot as the Tasks list draws it (put away: a quiet clock or check), its title and its second
+ *  line. A tap opens it: a task its chat, as a Tasks row does; an agent its tab. Its menu (a right click, a finger held)
+ *  settles, snoozes, wakes or unsettles it (core/menus.js restMenu, rest.tsx). */
+function ThreadRow({ t, p, snap, pad, data }: { t: Thread; p: Place; snap: Snapshot; pad: string; data: Record<string, string | undefined> }) {
+  const task = t.task, tab = t.tab
+  const sel = useUI((u) => (task ? u.task === task.id : u.place === p.id && !u.task && u.term === tab?.term))
+  const menu = useRowMenu({ beside: true })
+  const report = task?.report ? { ...task.report, eta: undefined } : undefined
+  const glyph = t.rest === 'snoozed' ? <ClockIcon aria-hidden className="size-3.5 text-fg3" /> : t.rest === 'settled' ? <CheckIcon aria-hidden className="size-3.5 text-fg3" /> : <TaskDot s={t.status} w={report} />
+  const line = t.line ? capital(t.line) : null
+  // a task with neither a live agent nor anything to settle has no menu
+  const menuable = tab || task?.canSettle || task?.canRest
+  const go = (e: { metaKey: boolean; ctrlKey: boolean }) => {
+    if (menu.held()) return
+    if (task) return splitClick(e) ? openSplit({ kind: 'task', id: task.id }) : openTask(task.id)
+    goPlace(p.id)
+    setUI(threadTabShown(tab!))
+  }
+  return (
+    <li {...data} {...(menuable ? menu.press : {})}
+      className={clsx(rowClass(sel, false, true), dragged, pad, line && 'py-1', 'group select-none [-webkit-touch-callout:none]', menu.open && !sel && 'bg-hover')}>
+      <span aria-hidden className={clsx('grid w-3.5 shrink-0 place-items-center', line && 'self-start h-5 phone:h-6')}>{glyph}</span>
+      <button type="button" aria-current={sel || undefined} aria-label={`${t.title}${line ? `, ${line}` : ''}`} onClick={go}
+        className="flex min-w-0 flex-1 cursor-pointer text-left outline-none after:absolute after:inset-0 after:rounded-[inherit] keys:focus-visible:after:shadow-[inset_0_0_0_1.5px_var(--focus)]">
+        <RowText className={clsx('text-[0.875rem]/5 phone:text-base/6', t.rest ? 'text-fg3' : sel ? 'text-fg' : 'text-fg2')} sub={line}>{t.title}</RowText>
+      </button>
+      {menu.open && menuable ? <ThreadMenu t={t} snap={snap} menu={menu} /> : null}
     </li>
+  )
+}
+
+/** a thread's menu: restMenu()'s rows (Settle or Unsettle; Snooze while it has a live agent of its own; Wake while a
+ *  snooze is set), what herdr-task refused under them */
+function ThreadMenu({ t, snap, menu }: { t: Thread; snap: Snapshot; menu: RowMenuState }) {
+  const task = t.task, tab = t.tab
+  const x = task ? { chat: taskChat(task), what: taskWho(snap, task.id) as string, rest: task.rest, restUntil: task.restUntil }
+    : { chat: tab!.term, what: tab!.name, rest: tab!.rest, restUntil: tab!.restUntil }
+  const rest = useRest(x, menu.close)
+  const snoozed = !!(task ?? tab)?.restUntil || !!(task ?? tab)?.woke
+  return (
+    <RowMenu menu={menu} label={t.title} className="min-w-56!">
+      {restMenu({ rest: t.rest, snoozed, snooze: task ? !!task.canRest : true }).map((it, i) => (it.sep ? <MenuSeparator key={`sep${i}`} /> : rest.item(it, i)))}
+      {rest.error ? <p role="alert" className="w-0 min-w-full px-2 pt-1 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{rest.error}</p> : null}
+    </RowMenu>
   )
 }
 

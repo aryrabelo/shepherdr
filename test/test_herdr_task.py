@@ -3873,6 +3873,21 @@ class SettleRules(unittest.TestCase):
         self.assertEqual(s.task_rest({}, [nap], [], self.NOW + 3600_001), {"rest": None, "woke": self.NOW + 3600_000})
         self.assertIsNone(s.task_rest({}, [], [], self.NOW))
 
+    def test_a_task_with_no_live_agent_keeps_its_settle_until_new_work(self):
+        # ASH-14: settled_at on the task itself, as core/settle.js keptSettle()
+        s, at = self.s, self.NOW
+        t = {"state": "running", "started": at - 9, "settled_at": at, "agents": [{"address": "t1", "at": at - 9}]}
+        self.assertEqual(s.task_rest(t, [], [], at + 5), {"rest": "settled", "at": at})
+        self.assertEqual(s.kept_settle(dict(t, state="queued")), {"rest": "settled", "at": at})
+        self.assertIsNone(s.kept_settle(dict(t, started=at + 1)))  # started (or resumed) since
+        self.assertIsNone(s.kept_settle(dict(t, agents=t["agents"] + [{"address": "t9", "at": at + 1}])))  # a new agent
+        self.assertIsNone(s.kept_settle(dict(t, attention_at=at + 1)))  # failing checks found since
+        self.assertEqual(s.kept_settle(dict(t, attention_at=at - 1))["rest"], "settled")  # found before: it was settled anyway
+        self.assertIsNone(s.kept_settle(dict(t, state="done")))
+        self.assertIsNone(s.kept_settle({"state": "running"}))
+        # a live agent of its own: its labels say, not the kept settle
+        self.assertIsNone(s.task_rest(t, [self.k({})], [], at + 5))
+
 
 class SettleAndSnooze(unittest.TestCase):
     """ASH-12: herdr-task settle, unsettle, snooze and wake label a task's live workers (never its reviewer) or one
@@ -4028,8 +4043,67 @@ class SettleAndSnooze(unittest.TestCase):
         no = {"error": "It has no live agent to settle or snooze."}
         self.assertEqual(self.cmd(self.rest.cmd_settle, agent="t77"), no)
         self.terms["t1"]["state"] = "finished"
-        self.assertEqual(self.cmd(self.rest.cmd_settle, id=self.ref), no)
-        self.assertEqual(self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h"), no)
+        # a task with none still settles (ASH-14), but can't snooze
+        self.assertEqual(self.cmd(self.rest.cmd_snooze, id=self.ref, in_="1h"), {"error": "It has no live agent to snooze."})
+        self.assertEqual(self.cmd(self.rest.cmd_wake, id=self.ref), {"ok": True, "woke": []})
+
+    def edit_task(self, **fields):
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
+            s.find(self.ref).update(**fields)
+            s.dirty = True
+
+    def stored(self):
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            return dict(s.find(self.ref))
+
+    def test_settle_a_task_with_no_live_agent_keeps_it_on_the_task_until_new_work(self):
+        # ASH-14: its agent closed (a T3 thread that stopped): Settle still puts it away, kept on the task
+        self.terms["t1"]["state"] = "finished"
+        task = lambda: self.cmd(self.commands.cmd_list)["tasks"][0]
+        self.assertEqual((task()["status"], task()["rest"]), ("needs", None))
+        out = self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.assertEqual(out, {"ok": True, "settled": [], "at": self.NOW, "was_snoozed": {}, "kept": True})
+        self.assertEqual(self.stored()["settled_at"], self.NOW)
+        self.assertEqual((task()["rest"], task()["rest_info"]), ("settled", {"rest": "settled", "at": self.NOW}))
+        # not news: no needs-you for it, no automation event, no alert
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            self.assertEqual(self.au.task_facts(s, s.find(self.ref))["rest"], "settled")
+        self.assertEqual(self.cmd(self.commands.cmd_alert, title="x", body=None, task=self.ref)["rest"], "settled")
+        # unsettle clears it; settle again
+        self.assertEqual(self.cmd(self.rest.cmd_unsettle, id=self.ref), {"ok": True, "unsettled": []})
+        self.assertNotIn("settled_at", self.stored())
+        self.assertIsNone(task()["rest"])
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        # new work brings it back: failing checks found since
+        self.edit_task(attention="Checks failing", attention_at=self.NOW + 1)
+        self.assertIsNone(task()["rest"])
+        self.edit_task(attention=None, attention_at=None)
+        self.assertEqual(task()["rest"], "settled")
+        # a new agent for it (resume): its labels say from then on, and the kept settle never comes back
+        self.edit_task(agents=[{"address": "t1", "at": 1}, {"address": "t3", "at": self.NOW + 2}])
+        self.term("t3", turn=0, status="idle", **{"herdr.task": self.key, "herdr.role": "worker"})
+        self.assertIsNone(task()["rest"])
+        self.terms["t3"]["state"] = "finished"
+        self.assertIsNone(task()["rest"])
+        # settled again later, then started over (herdr-task start: started now)
+        self.clock = self.NOW + 10
+        self.cmd(self.rest.cmd_settle, id=self.ref)
+        self.assertEqual(task()["rest"], "settled")
+        self.edit_task(started=self.NOW + 11)
+        self.assertIsNone(task()["rest"])
+
+    def test_settle_a_queued_task_and_never_a_done_one(self):
+        self.terms["t1"]["state"] = "finished"
+        self.edit_task(state="queued")
+        self.assertEqual(self.cmd(self.rest.cmd_settle, id=self.ref)["kept"], True)
+        self.assertEqual(self.cmd(self.commands.cmd_list)["tasks"][0]["rest"], "settled")
+        self.edit_task(state="done")
+        self.assertEqual(self.cmd(self.rest.cmd_settle, id=self.ref), {"error": "It's done: nothing to settle."})
+
+    def test_settling_with_a_live_agent_clears_a_kept_settle(self):
+        self.edit_task(settled_at=self.NOW - 5)
+        self.assertEqual(self.cmd(self.rest.cmd_settle, id=self.ref)["settled"], ["t1"])
+        self.assertNotIn("settled_at", self.stored())
 
     def test_list_json_carries_rest(self):
         task = lambda: self.cmd(self.commands.cmd_list)["tasks"][0]

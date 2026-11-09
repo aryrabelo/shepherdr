@@ -114,11 +114,35 @@ export function retryLine(r, now = Date.now()) {
 // helpers: its worker's own helper agents (SHEP-54: a reviewer it started as its hc child), never among live: one at
 // work or asking keeps the task Working (its worker waits on it; the worker answers what it asks), else they count not.
 // rest (ASH-12, core/settle.js taskRest): settled or snoozed by hand, from its live agents' labels (live entries carry
-// settled and snoozed: restFields()); its own shelf at the end of a list, and never news. null for a task not running.
+// settled and snoozed: restFields()), or with none, a settle kept on the task (ASH-14 keptSettle); its own shelf at the
+// end of a list, and never news. null for a task never put away, or done.
 export function place(list, task, opts = {}) {
   const p = placeOf(list, task, opts);
-  const r = p.live.length ? taskRest(task, p.live, opts.helpers ?? [], opts.now ?? Date.now()) : null;
+  const r = p.section === "done" ? null : taskRest(task, p.live, opts.helpers ?? [], opts.now ?? Date.now());
   return { ...p, rest: r?.rest ?? null, restInfo: r };
+}
+
+// A task's status in short (Jump's rows, mods/jump; the whole rules: place()): settled or snoozed by hand first, a
+// stopped or queued task settled with no live agent too (ASH-14 keptSettle); then To do, Queued, Scheduled, Done as
+// stored; a problem nobody is on or a question, Needs you; at work, Working; Ready or Merging; just started, Working;
+// else Needs you. live: its live agents ([{ address, status, turn, role, settled, snoozed }]).
+export function briefStatus(task, live = [], now = Date.now()) {
+  const st = task.state;
+  const own = st === "running" || st === "ready" ? live : [];
+  const rest = st === "done" ? null : taskRest(task, own, [], now)?.rest;
+  if (rest) return rest;
+  if (["todo", "queued", "scheduled", "done"].includes(st)) return st;
+  // A problem (failing checks) its agent is on (onIt()): Working; nobody on it: Needs you.
+  const fixing = task.attention && onIt(task, own, now);
+  if ((task.attention && !fixing) || own.some((a) => a.status === "blocked")) return "needs";
+  if (fixing) return "working";
+  // Back at work after it said ready (busyAgain()): Working.
+  if (st === "ready" && !busyAgain(task, own, now)) return task.merge_requested && own.length ? "merging" : "ready";
+  if (own.some((a) => a.status === "working")) return "working";
+  const last = task.agents?.[task.agents.length - 1];
+  const started = Math.max(0, ...[task.started, last?.at].filter((x) => typeof x === "number"));
+  if (!last?.ended && now - started < STARTING_MS) return "working";
+  return "needs";
 }
 
 function placeOf(list, task, { live = [], helpers = [], loaded = true, now = Date.now() } = {}) {

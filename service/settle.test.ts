@@ -5,6 +5,8 @@ import { expect, test, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as RS from "../core/settle.js";
+const { agentRest } = RS as any;
 
 const HOME_ = mkdtempSync(join(tmpdir(), "shep-settle-"));
 const BIN = join(HOME_, "herdr-task"), CALLS = join(HOME_, "calls"), REPLY = join(HOME_, "reply");
@@ -59,19 +61,48 @@ test("a task's rest in the snapshot: settled, snoozed, woke; what it can do", ()
   expect(s.needs.map((n: any) => n.task)).toEqual(["SHOP-4"]);
 });
 
-test("an Assistant's rest in the snapshot, from its terminal's labels (core/settle.js)", () => {
+test("an Assistant's rest in the snapshot, from its terminal's labels (core/settle.js agentRest)", () => {
   const k = (labels: any, more: any = {}) => ({ address: "t1", labels: { "herdr.role": "coordinator", ...labels }, turn: 3, status: { state: "idle" }, ...more });
-  expect(M.assistantRest(k({ settled: "100:3" }), NOW)).toEqual({ rest: "settled", at: 100 });
+  expect(agentRest(k({ settled: "100:3" }), NOW)).toEqual({ rest: "settled", at: 100 });
   // a turn ended since: new work, no longer settled
-  expect(M.assistantRest(k({ settled: "100:2" }), NOW)).toBeNull();
-  expect(M.assistantRest(k({ snoozed: String(NOW + 1000) }), NOW)).toEqual({ rest: "snoozed", until: NOW + 1000 });
-  expect(M.assistantRest(k({ snoozed: "500" }), NOW)).toEqual({ rest: null, woke: 500 });
+  expect(agentRest(k({ settled: "100:2" }), NOW)).toBeNull();
+  expect(agentRest(k({ snoozed: String(NOW + 1000) }), NOW)).toEqual({ rest: "snoozed", until: NOW + 1000 });
+  expect(agentRest(k({ snoozed: "500" }), NOW)).toEqual({ rest: null, woke: 500 });
   // asking you: it shows, snooze kept
-  expect(M.assistantRest(k({ snoozed: String(NOW + 1000) }, { status: { state: "blocked" } }), NOW)).toEqual({ rest: null, until: NOW + 1000, showing: true });
+  expect(agentRest(k({ snoozed: String(NOW + 1000) }, { status: { state: "blocked" } }), NOW)).toEqual({ rest: null, until: NOW + 1000, showing: true });
   const c = new C.Compat() as any;
   const p = snapOf(c, [], [space({ assistantRest: { rest: "snoozed", until: NOW + 1000 } })]).places[0];
   expect([p.rest, p.restUntil, p.woke]).toEqual(["snoozed", NOW + 1000, undefined]);
   expect(snapOf(c, [], [space({ assistantRest: { rest: null, woke: 500 } })]).places[0].woke).toBe(500);
+});
+
+test("ASH-14 threads: a task's home space, whether its row settles it, its activity; a tab's own agent is a thread", () => {
+  const c = new C.Compat() as any;
+  const k = (address: string, more: any = {}) => ({ address, state: "live", labels: {}, turn: 1, status: { state: "idle" }, status_ms: 500, ...more });
+  const terms: Record<string, any> = {
+    t2: k("t2", { status: { state: "blocked" }, status_ms: 900 }),
+    t3: k("t3", { labels: { settled: "400:1" } }),
+    // a task's agent is its task's thread; a shell reports no status
+    t4: k("t4", { labels: { "herdr.task": "/srv/shop#1" } }),
+    t5: { address: "t5", state: "live", labels: {} },
+  };
+  c.terminalsOf = (a: string) => terms[a] ?? null;
+  const tabs = ["t2", "t3", "t4", "t5"].map((a, i) => ({ id: `tb${i}`, name: a, terminals: [a] }));
+  const s = snapOf(c, [
+    row("SHOP-1", "working", { space: "sp2", canSettle: true, activity: 700 }),
+    // no live agent: it settles from its row (kept on the task), it can't snooze
+    row("SHOP-2", "todo", { worker: null, canSettle: true, rest: "settled", restInfo: { rest: "settled", at: 50 } }),
+    row("SHOP-3", "done", { canSettle: false, done_at: NOW }),
+    row("SHOP-4", "ready", { folder: "/srv/else" }),
+  ], [space({ tabs }), space({ id: "sp2", name: "shop2", assistant: null })]);
+  const t = Object.fromEntries(s.tasks.map((x: any) => [x.id, x]));
+  expect([t["SHOP-1"].home, t["SHOP-1"].canSettle, t["SHOP-1"].activity]).toEqual(["sp2", true, 700]);
+  expect([t["SHOP-2"].home, t["SHOP-2"].canSettle, t["SHOP-2"].canRest, t["SHOP-2"].rest]).toEqual(["sp1", true, undefined, "settled"]);
+  expect([t["SHOP-3"].canSettle, t["SHOP-4"].home]).toEqual([undefined, undefined]);
+  const tab = Object.fromEntries(s.places[0].tabs.map((x: any) => [x.term, x]));
+  expect([tab["t:t2"].thread, tab["t:t2"].word, tab["t:t2"].section, tab["t:t2"].at, tab["t:t2"].rest]).toEqual([true, "blocked", "needs", 900, undefined]);
+  expect([tab["t:t3"].thread, tab["t:t3"].section, tab["t:t3"].rest, tab["t:t3"].restAt]).toEqual([true, "idle", "settled", 400]);
+  expect([tab["t:t4"].thread, tab["t:t5"].thread]).toEqual([undefined, undefined]);
 });
 
 test("a space's counts leave settled and snoozed tasks out; its Assistant asking still counts", () => {

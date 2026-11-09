@@ -17,21 +17,22 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { machines, exec, readTextFile, watchFolder, appHome, home, run, theme, nextCommand, shared, setShared, openOverlay, layout } from "herdr";
+import { machines, exec, readTextFile, watchFolder, appHome, home, run, theme, nextCommand, shared, setShared, openOverlay } from "herdr";
 import { holdKeys } from "./keyholder.js";
-import { spaces, panes, agents, terminals, inRender } from "./live.js";
+import { spaces, agents, terminals, inRender } from "./live.js";
 // What needs the person, from every space and machine (lib/inbox.js, shared; the tab
 // bar runs its engine): agents asking or waiting, task problems, failed automations, merges.
 import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit, tabOf } from "./inbox.js";
 import { words } from "./core/asks.js";
 import { taskDot, ownProgress } from "./dot.js";
-import { taskMenu } from "./core/menus.js";
+// A task live, its click and its menu, as the sidebar's threads have them (lib/taskthread.js, shared).
+import { liveOf, helpersOf, placeTask, queueNote, dropSpent, taskTarget, threadsShown, openThread, openRowMenu } from "./taskthread.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
-import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace } from "./core/tasks.js";
+import { STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix,
+  reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
-// Settled and snoozed by hand (ASH-12): each live agent's labels, the shelves' words.
-import { restFields, REST } from "./core/settle.js";
+// Settled and snoozed by hand (ASH-12): the shelves' words, what a row can put away (ASH-14: a stopped task settles).
+import { REST, taskCan } from "./core/settle.js";
 import { TEXT, H, RADIUS, red, amber } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
@@ -68,9 +69,6 @@ async function cli(machine, [command, ...args], folder) {
 }
 
 export { GROUP_BY };
-
-// a worker's own helper agent (SHEP-54): an hc child labelled reviewer or helper
-const helper = (k) => ["reviewer", "helper"].includes(k.labels?.["herdr.role"]) && !!k.parent;
 
 export default class Tasks extends View {
   init(_props, cx) {
@@ -198,60 +196,29 @@ export default class Tasks extends View {
     this.lists = [...this.byMachine.entries()].sort(([a], [b]) => order.indexOf(a || null) - order.indexOf(b || null)).flatMap(([, ls]) => ls);
   }
 
-  // A task's agents now: live terminals labelled with its key, on the folder's machine.
+  // A task's agents now, its worker's helpers, its place (with the rows put away or back a moment ago) and why a queued
+  // one waits: taskthread.js, as the sidebar's threads read them.
   live(list, task) {
-    const key = `${list.slug}#${task.id}`;
-    const m = list.machine ?? null;
-    const f = this.frame ?? {};
-    const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
-    return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
-      .filter((k) => k.program?.key !== "shell" && !k.program?.shell && !helper(k))
-      .map((k) => {
-        // agents() knows when someone looked at a finished agent (done -> idle), as Herdr shows it.
-        const a = shown.get(k.address);
-        // No report yet: starting (counts as working).
-        const st = a?.status ?? (RANK[k.status] ? k.status : null);
-        const tab = k.labels?.["herdr.tab"];
-        // Where it shows: its own pane, else the chat pane it's parked behind (mods/chat).
-        const chat = k.labels?.["herdr.chat"];
-        const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? (chat ? (m ? `${m}/${chat}` : chat) : null);
-        return { address: k.address, status: st, program: a?.program ?? k.program, tab: tab && m ? `${m}/${tab}` : tab, pane,
-          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, ...restFields(k) };
-      });
+    return liveOf(list, task, this.frame ?? {});
   }
 
-  // A task's status (its section), why it needs the person, and its live agents: core/tasks.js's
-  // place(), with what Herdr knows live (its agents now, whether its machine has loaded).
   place(list, task) {
-    const st = task.state;
-    const live = st === "running" || st === "ready" ? this.live(list, task) : [];
-    const loaded = machines().find((m) => (m.name ?? null) === (list.machine ?? null))?.layout !== "loading";
-    return place(list, task, { live, loaded, helpers: live.length ? this.helpers(list, task, live) : [] });
+    return placeTask(list, task, this.frame ?? {});
   }
 
-  // Its worker's own helper agents (SHEP-54: a reviewer it started as its hc child): never among its agents; one at
-  // work or asking keeps the task Working (core/tasks.js place()).
   helpers(list, task, live) {
-    const key = `${list.slug}#${task.id}`, m = list.machine ?? null;
-    const mine = new Set(live.map((a) => a.address.split("/").pop()));
-    const f = this.frame ?? {};
-    const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
-    // on the folder's machine, a child of one of its agents
-    return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && helper(k)
-      && machineOf(k.address) === m && mine.has(String(k.parent).split("/").pop()))
-      .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? (RANK[k.status] ? k.status : null) }));
+    return helpersOf(list, task, live, this.frame ?? {});
   }
 
-  // Why a queued task waits (core/tasks.js): the tasks it comes after, else the folder is full.
   queueReason(list, task) {
-    return queueReason(list, task, list.tasks.filter((x) => x.state === "running" && this.live(list, x).length).length);
+    return queueNote(list, task, this.frame ?? {});
   }
 
   // Herdr cuts off a render that takes too long ("interrupted"): one render reads terminals(),
   // agents(), panes() and each space's coordinator tab once (this.frame, live.js), not once per row.
   render(cx) {
     this.frame = {};
-    try { return inRender(() => this.draw(cx)); } finally { this.frame = null; }
+    try { return inRender(() => this.draw(cx)); } finally { dropSpent(this.frame, cx); this.frame = null; }
   }
 
   draw(cx) {
@@ -787,7 +754,7 @@ export default class Tasks extends View {
   toWorker(address, x = null) {
     const k = terminals().find((y) => y.address === address);
     const m = machineOf(address);
-    if (threads() && k?.labels?.["herdr.task"]) {
+    if (threadsShown(this.frame ?? {}) && k?.labels?.["herdr.task"]) {
       const [slug, id] = k.labels["herdr.task"].split("#");
       const list = this.listOf(slug, m);
       const task = list?.tasks.find((y) => String(y.id) === id);
@@ -863,21 +830,9 @@ export default class Tasks extends View {
     for (const id of [...this.asks.keys()]) if (!list.some((x) => x.id === id)) this.asks.delete(id);
   }
 
-  // Where a click on a task goes: always into it, inside this panel (drill in; never a tab, a
-  // peek or the Assistant's box). Its worker while one runs (the one asking first; a reviewer
-  // alone too); else its last agent's conversation, read from that agent's own log, with Resume
-  // (mods/chat); a task that never started says why it waits. Nowhere in a layout without the view.
+  // Where a click on a task goes: into it, inside this panel (taskthread.js taskTarget; the sidebar's threads too).
   target(p) {
-    if (!threads()) return null;
-    const { list, task } = p;
-    const m = list.machine ?? null;
-    const key = { machine: m, folder: list.folder, slug: list.slug, id: task.id };
-    const open = (terminal, more = {}) => () => openThread({ terminal, task: refOf(list, task), title: task.title, key, ...more });
-    const worker = p.live.find((x) => x.role !== "reviewer" && x.status === "blocked") ?? p.live.find((x) => x.role !== "reviewer") ?? p.live[0];
-    if (worker) return open(worker.address);
-    const last = task.agents?.[task.agents.length - 1];
-    if (last?.address) return open(m ? `${m}/${last.address}` : last.address, { log: last.log ? { path: last.log, kind: last.agent ?? null } : null });
-    return open(null, { note: p.section === "queued" ? capital(this.queueReason(list, task)) : "This task hasn't started." });
+    return taskTarget(p, this.frame ?? {});
   }
 
   // bare: under For you's space heading, which says where it is.
@@ -893,15 +848,17 @@ export default class Tasks extends View {
     // Scheduled (SHEP-38): its time until it starts under its calendar ("6h"), where a working row's time left goes, in grey.
     const left = p.rest ? null : leftOf(p, w);
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
-    const key = taskKey(list, task);
+    const key = taskKey(list, task), can = taskCan(section, live);
     return this.line(`task-${key}`, {
       go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
       dim: section === "done" || p.rest === "settled", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
       action: section === "ready" ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
         ref: refOf(list, task), sub: section === "scheduled" ? sub : null,
-        // Settle and Snooze while it has a live agent of its own (ASH-12; a reviewer's turn is its worker's)
-        rest: { can: live.some((a) => a.role !== "reviewer"), rest: p.rest, snoozed: Boolean(p.restInfo?.until || p.restInfo?.woke) } },
+        // Settle or Unsettle unless it's done, a stopped one too (ASH-14: kept on the task); Snooze while it has a live
+        // agent of its own (ASH-12; a reviewer's turn is its worker's)
+        rest: { can: can.snooze, settle: can.settle, rest: p.rest,
+          snoozed: Boolean(p.restInfo?.until || p.restInfo?.woke) } },
     }, t);
   }
 
@@ -922,22 +879,14 @@ export default class Tasks extends View {
     if (gone.size) cx.timer.after(0, () => setShared(PINS, pinnedKeys().filter((k) => !gone.has(k))));
   }
 
-  // The row's right-click menu (mods/tasks-menu): Pin / Unpin, at the pointer. Rows show no pin of
-  // their own: a pinned task sits in the Pinned group.
+  // The row's right-click menu (mods/tasks-menu "row", taskthread.js openRowMenu): Pin / Unpin, at the pointer. Rows
+  // show no pin of their own: a pinned task sits in the Pinned group.
   // A task not started yet also starts later (SHEP-38): a few times, and a scheduled one Start now and Unschedule
   // (core/menus.js taskMenu; the web's Other time… types any time, here the Assistant does).
-  // A task with a live agent also settles and snoozes (ASH-12): Settle or Unsettle, Snooze's times, Wake.
+  // A task settles (ASH-14: a stopped one too) and, with a live agent, snoozes (ASH-12): Settle or Unsettle, Snooze's
+  // times, Wake.
   rowMenu(pin) {
-    const items = taskMenu({ pinned: pin.on, status: pin.status, rest: pin.rest }).filter((x) => !x.typed);
-    // As tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
-    let height = 8, first = true;
-    for (const x of items) {
-      if ((x.sep || x.heading) && !first) height += 4;
-      height += x.sep ? 0 : x.heading ? 28 : 32;
-      first = false;
-    }
-    openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height, props: { menu: "row", key: pin.key, on: pin.on,
-      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, rest: pin.rest } });
+    openRowMenu(pin);
   }
 
   // Ready = "looks done, your call": Review (opens the Accept card) is the person's one action here, at the row's end. It merges first when there is something to merge (herdr-task accept follows the merge
@@ -1020,18 +969,6 @@ function bindSearchKeys(cx, context) {
 function agentName(address) {
   const k = terminals().find((x) => x.address === address);
   return k?.name || k?.program?.name || address;
-}
-
-// Task threads: a click drills into the task inside this panel (the layout's "tasks" stack: this
-// list is "tasks-list", the task "tasks-thread", mods/chat/panel.js), never a side chat. Only
-// where the shown layout has that view. Shared "tasks.thread" = { terminal (its agent, live or its
-// last one; null: never started), task (its id), title, key ({ machine, folder, slug, id }), log
-// ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
-const hasThread = (n) => Boolean(n && typeof n === "object") && (n.id === "tasks-thread" || (n.children ?? []).some(hasThread));
-const threads = () => hasThread(layout());
-function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
-  setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
-  run("layout.select", { stack: "tasks", child: "tasks-thread" });
 }
 
 // The Accept card's accept under way (shared "tasks.accepting" = { "<machine>:<folder>:<ref>": at },

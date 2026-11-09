@@ -259,11 +259,12 @@ def main():
         c.add_argument("--agent", metavar="TERMINAL", help="a live terminal instead of a task's agents: an Assistant (t3, vm-b/t3)")
         return c
     rest_cmd("settle", cmd_settle, "put a task (or --agent) away until it has new work: a turn ends, it gets busy, its checks fail; "
-             "off every \"needs you\" and news, on a Settled shelf at the end of lists; ends a snooze")
+             "off every \"needs you\" and news, on a Settled shelf at the end of lists; ends a snooze. A task with no live "
+             "agent settles too, until it starts or gets an agent again")
     c = rest_cmd("unsettle", cmd_unsettle, "undo settle")
     c.add_argument("--snooze-until", type=int, metavar="MS", help="put back the snooze the settle ended, if it hasn't run out (Undo)")
-    c = rest_cmd("snooze", cmd_snooze, "hide a task (or --agent) until a time, working or not, on a Snoozed shelf: it still shows "
-                 "while it asks or fails, and wakes where it was; ends a settle")
+    c = rest_cmd("snooze", cmd_snooze, "hide a task with a live agent (or --agent) until a time, working or not, on a Snoozed shelf: it "
+                 "still shows while it asks or fails, and wakes where it was; ends a settle")
     c.add_argument("--in", dest="in_", metavar="SPAN", help="this long from now: \"3h\", \"90m\", \"2 days\"")
     c.add_argument("--at", help="at this time, this machine's time zone: \"tomorrow 9:00\", \"mon 9:00\", \"18:00\"")
     rest_cmd("wake", cmd_wake, "end a snooze now (also: woke, now seen)")

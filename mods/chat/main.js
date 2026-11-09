@@ -64,7 +64,7 @@ import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, T
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
 import { stillSettled, napping, woke, notNews, wordOf } from "./core/settle.js";
-import { settle, unsettle, wake, wakeSeen } from "./rest.js";
+import { settleInView, wake, wakeSeen } from "./rest.js";
 import { ScreenWatch, screenStrips, openCard, cardsOf, starting, mayStart, cliOf } from "./screens.js";
 import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
@@ -4102,16 +4102,14 @@ export default class Chat extends View {
 
   // chat.settle (ASH-12): the agent in view settled, as its row's or header's Settle, or unsettled when it is. A task's
   // thread settles its task (its live agents, herdr-task settle <ref>), else the agent. Not while it works or asks.
+  // ASH-14: a task's thread with no live agent too; what shows counts, its row's mark too (lib/rest.js settleInView).
   settleKey() {
-    const k = terminals().find((x) => x.address === this.addr && x.state === "live");
-    if (!k) return;
-    const word = wordOf(k);
+    const k = terminals().find((x) => x.address === this.addr && x.state === "live") ?? null;
     const key = this.taskKey;
-    const task = this.thread && this.taskRef && key?.folder ? { machine: key.machine ?? null, folder: key.folder, ref: this.taskRef } : null;
-    const x = task ?? { agent: this.addr };
-    const what = task ? this.taskRef : toastWho(k);
-    if (stillSettled(k, word)) unsettle(x, what);
-    else if (word !== "working" && word !== "blocked") settle(x, what);
+    const task = this.thread && this.taskRef && key?.folder
+      ? { machine: key.machine ?? null, folder: key.folder, ref: this.taskRef, slug: key.slug, id: key.id } : null;
+    if (!k && !task) return;
+    settleInView({ live: k, task, agent: this.addr, what: task ? this.taskRef : toastWho(k) });
   }
 
   myPane() {

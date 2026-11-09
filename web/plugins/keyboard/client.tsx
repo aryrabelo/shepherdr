@@ -3,7 +3,8 @@ import { Search } from './search.tsx'
 // Keybinds names (core/keys.js; Ctrl+Shift+? or the tab bar's menu opens the Keybinds dialog). Those a browser keeps
 // for itself (Ctrl+Tab, Ctrl+1–9, Ctrl+Shift+N, T, W) stay the window's. Ctrl+K jumps.
 import { useState, useSyncExternalStore } from 'react'
-import { closeArtifact, definePlugin, has, keysChat, setUI, togglePlaces, type UI } from '@client/kernel.ts'
+import { closeArtifact, definePlugin, getState, has, keysChat, setUI, togglePlaces, type UI } from '@client/kernel.ts'
+import { settleFor, settleKeys } from '@client/threads.ts'
 import { toggleDictation } from '@plugins/chat/client.tsx'
 import { openFind } from '@plugins/chat/find.tsx'
 import { toggleCall } from '@plugins/voice/client.tsx'
@@ -135,15 +136,15 @@ export default definePlugin({
           openFind(chatNow())
           return true
         }
-        // Ctrl+Shift+S (chat.settle, ASH-12): the agent in view settled, or back once it is (the window's key; Cmd+Shift+S
-        // is left to herdr-t3-inbox)
+        // Ctrl+Shift+S (chat.settle, ASH-12): what's in view settled, or back once it is (the window's key; Cmd+Shift+S
+        // is left to herdr-t3-inbox). ASH-14: the focused pane's, the open task's (with no live agent too), the agent's tab
+        // shown in the middle (a thread's click shows it), else the space's Assistant; as each shows now, its mark on this
+        // screen too (threads.ts settleKeys, settleFor)
         if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyS' && has('tasks')) {
           e.preventDefault()
-          const key = chatNow()
-          const p = snap.places.find((x) => x.chat === key)
-          const t = p ? null : snap.tasks.find((x) => x.agent?.chat === key)
-          if (p?.assistantTab?.live) void toggleSettle({ chat: key, what: (TS.assistantWho as (n: string) => string)(p.name), rest: p.rest, restUntil: p.restUntil })
-          else if (t?.canRest) void toggleSettle({ chat: key, what: taskWho(snap, t.id), rest: t.rest, restUntil: t.restUntil })
+          const x = settleFor(snap, settleKeys(ui), getState().restNow)
+          const what = x?.task ? taskWho(snap, x.task.id) : x?.tab ? x.tab.name : x?.place ? (TS.assistantWho as (n: string) => string)(x.place.name) : ''
+          if (x) void toggleSettle({ chat: x.chat, what, rest: x.rest, restUntil: x.restUntil })
           else toast({ title: (RS.REST as { noAgent: string }).noAgent, level: 'warning' })
           return true
         }

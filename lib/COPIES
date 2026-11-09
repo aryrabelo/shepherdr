@@ -12,15 +12,16 @@ core/toasts.js: toasts
 core/menus.js: spaces-chat tasks tasks-menu menu-tasks new-menu-tasks pane-chat tabs-tasks coordinator
 core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts pane-chat
 core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts pane-chat
-core/tasks.js: chat jump tasks pane-chat
+core/tasks.js: chat jump tasks pane-chat spaces-chat
+core/threads.js: spaces-chat
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
 keyholder.js: chat tasks
 unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings
 settings.js: chat newspace shepherdr-settings
-dot.js: chat jump tasks
-core/tasklists.js: jump tasks
+dot.js: chat jump tasks spaces-chat
+core/tasklists.js: jump tasks spaces-chat
 core/chat-log.js: chat
 core/chat-view.js: chat
 core/screens.js: chat
@@ -64,3 +65,4 @@ usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 core/usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 core/settle.js: chat jump tasks tasks-menu spaces-chat shepherdr-settings pane-chat tabs-tasks workspace-status-chat
 rest.js: chat pane-chat tabs-tasks tasks-menu
+taskthread.js: tasks spaces-chat

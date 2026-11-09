@@ -10,12 +10,12 @@ purpose (phone navigation, touch instead of right-click, a browser key the brows
 with why.
 
 Where both sides can read the same words or items from `core/`, they do, with a test, so they can't drift apart
-(`core/menus.js`, `core/settings.js`, `core/spaces.js`, `core/tasks.js`, `core/chat-view.js` for the chat's words and its
-working line, `core/bg-jobs.js` for the background jobs over the box, …).
+(`core/menus.js`, `core/settings.js`, `core/spaces.js`, `core/tasks.js`, `core/threads.js` for the sidebar's threads,
+`core/chat-view.js` for the chat's words and its working line, `core/bg-jobs.js` for the background jobs over the box, …).
 
 | Surface | Window | Web | Page |
 |---|---|---|---|
-| Sidebar: brand, spaces, machines, sections, Pinned, foot, menus, machine popup | `mods/spaces-chat`, `mods/workspace-chrome-shepherdr` | `web/plugins/places`, `web/plugins/health`, `web/plugins/limits`, `web/src/App.tsx` (SideFoot) | [sidebar](parity/sidebar.md) |
+| Sidebar: brand, spaces, machines, sections, Pinned, threads, foot, menus, machine popup | `mods/spaces-chat`, `mods/workspace-chrome-shepherdr` | `web/plugins/places`, `web/plugins/health`, `web/plugins/limits`, `web/src/App.tsx` (SideFoot), `web/src/threads.ts` | [sidebar](parity/sidebar.md) |
 | Tab bar, + menu, tab menu, pane header, Autopilot switch, Chat · Terminal | `mods/tabs-tasks`, `mods/new-menu-tasks`, `mods/menu-tasks`, `mods/pane-chat` | `web/plugins/coordinators`, `web/plugins/terminal`, `web/src/App.tsx` (headers) | [header](parity/header.md) |
 | Chat: messages, tool rows, news, cards, images, reactions, message actions, find bar, composer, model picker, dictation, call | `mods/chat`, `mods/chat-models`, `mods/chat-react`, `mods/chat-call`, `mods/chat-image` | `web/plugins/chat`, `web/plugins/reactions`, `web/plugins/voice`, `web/src/restart.tsx` | [chat](parity/chat.md) |
 | Tasks panel and task view | `mods/tasks`, `mods/tasks-menu`, `mods/chat/panel.js`, `mods/task-files`, `mods/task-changes`, `mods/task-pr`, `mods/task-browser` | `web/plugins/tasks`, `web/src/Panel.tsx`, `web/plugins/browser`, `web/plugins/worktree` | [tasks](parity/tasks.md) |

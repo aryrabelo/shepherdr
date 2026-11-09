@@ -69,6 +69,20 @@ export interface PlaceTab {
   prog?: string
   /** the known agent it runs (the window's knownAgents key: "claude", "opencode", …): it can restart and switch */
   agent?: string
+  /** ASH-14: an agent of the space's own (core/threads.js isLooseAgent: not its Assistant, a task's or a helper): a
+   *  thread under the space's row in the sidebar */
+  thread?: boolean
+  /** a thread's status word (working, blocked, error, idle, done) and its section among the threads (core/threads.js
+   *  agentSection: needs, working, idle) */
+  word?: string
+  section?: 'needs' | 'working' | 'idle'
+  /** a thread's latest status change (ms): its order among the space's threads */
+  at?: number
+  /** a thread put away by hand (core/settle.js agentRest), as a task's rest */
+  rest?: 'settled' | 'snoozed'
+  restAt?: number
+  restUntil?: number
+  woke?: number
 }
 
 /** A space: a folder on a machine with a name and its own coordinator, as herdr's spaces. Every machine has its home
@@ -310,6 +324,9 @@ export interface Task {
   place: string
   /** second line in lists */
   sub?: string
+  /** ASH-14: its second line once back among the rest (put away or woke: core secondLine without its rest), which an
+   *  Unsettle or a Wake shows at once */
+  awakeSub?: string
   /** ASH-12 Settle and Snooze (core/settle.js): put away by hand. settled: until new work; snoozed: out of sight until
    *  restUntil. Either is no news: in no count, toast or push. */
   rest?: 'settled' | 'snoozed'
@@ -321,6 +338,12 @@ export interface Task {
   woke?: number
   /** it has a live agent of its own to settle or snooze (its row menu offers them) */
   canRest?: boolean
+  /** ASH-14: it can be settled from its row, with no live agent too (core/settle.js taskCan; Snooze still needs canRest) */
+  canSettle?: boolean
+  /** ASH-14: the space it is a thread of in the sidebar (core/threads.js threadHome), when it has one */
+  home?: string
+  /** ASH-14: its latest activity (ms, core/threads.js taskActivity): its order among its space's threads */
+  activity?: number
   /** Working: the minutes left under its row's dot, in the window's words ("6m", "<1m", "2h"), once its agent gave them;
    *  Scheduled: the time until it starts ("6h", "2d") */
   left?: string

@@ -587,7 +587,7 @@
         ]
       },
       "forms": {
-        "herdr": "Row menu: Settle/Unsettle, Snooze (picks, Other time…), Wake; the Assistant's header ✓ and clock; Ctrl+Shift+S; Snoozed and Settled groups last",
+        "herdr": "Row menu: Settle/Unsettle (a task with no live agent too), Snooze (picks, Other time…) with a live agent, Wake; the Assistant's header ✓ and clock; Ctrl+Shift+S; Snoozed and Settled groups last; rows move at once",
         "desktop": "Right-click or ⋯ on a row; the Assistant's header ✓ and clock (picks and a typed time); Ctrl+Shift+S; a toast undoes it",
         "tablet": "Long-press a row; the Assistant's header ✓ and clock",
         "phone": "Long-press a row: sheet; the Assistant's in the header's ⋯"
@@ -597,6 +597,42 @@
         "compat.ts",
         "model.ts",
         "push.ts"
+      ]
+    },
+    {
+      "id": "threads-sidebar",
+      "addon": "tasks",
+      "title": "Threads in the sidebar",
+      "core": [
+        "threads",
+        "settle",
+        "tasks",
+        "menus"
+      ],
+      "herdr": {
+        "mods": [
+          "spaces-chat",
+          "tasks",
+          "tasks-menu"
+        ]
+      },
+      "web": {
+        "files": [
+          "plugins/places/client.tsx",
+          "src/threads.ts",
+          "src/kernel.ts",
+          "plugins/tasks/rest.tsx"
+        ]
+      },
+      "forms": {
+        "herdr": "Under each space at full width: its tasks at work or waiting and its own agents in its tabs (needs you, working, then by activity), a Snoozed heading, Settled folded to \"N settled\"; click opens the task's chat or the agent's terminal; right-click Settle/Unsettle, Snooze, Wake; rows move at once",
+        "desktop": "Under each space row in the sidebar; right-click a thread for Settle/Unsettle, Snooze, Wake",
+        "tablet": "Under each space row in the drawer; long-press a thread",
+        "phone": "Under each space row in the drawer; long-press a thread: sheet"
+      },
+      "service": [
+        "compat.ts",
+        "model.ts"
       ]
     },
     {

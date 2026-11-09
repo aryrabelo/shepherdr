@@ -35,6 +35,10 @@ const { NOTIFY, everywhereOf, spaceLevel, machineLevel, machineOfSpace, spaceOwn
 // Settings › Notify's words, the window's own (core/settings.js)
 import * as STcore from "../core/settings.js";
 const STc = STcore as any;
+import * as THc from "../core/threads.js";
+import * as RSc from "../core/settle.js";
+const { threadHome, isLooseAgent, agentSection } = THc as any;
+const { agentRest, wordOf } = RSc as any;
 
 const { ago } = T as any;
 
@@ -55,7 +59,7 @@ function headerPilot(a: any) {
 }
 
 
-/** ASH-12: what a task's or an Assistant's rest (core/settle.js taskRest / service/model.ts assistantRest) gives the
+/** ASH-12: what a task's or an agent's rest (core/settle.js taskRest / agentRest) gives the
  *  screen: rest (settled | snoozed), when it was settled (restAt) or wakes (restUntil, also while it shows because it
  *  needs you), and woke (its snooze ran out, not looked at yet). */
 export function restOf(r: { rest?: string | null; at?: number | null; until?: number; woke?: number } | null | undefined) {
@@ -348,7 +352,10 @@ export class Compat {
           return { id: t.id, name: (MNc as any).tabName(named(t.raw) ? t.raw : "", prog), named: named(t.raw), term: `t:${t.addr}`,
             ...(cli ? { cli } : {}), ...(agent || cli ? { agent: agent?.key ?? cli } : {}), state: stateOf(k), where: shortHome(k?.foreground?.cwd ?? k?.cwd),
             // what its pane header calls it: the agent, else the program in front, else its title
-            prog: prog ?? (k?.foreground?.name || k?.title || "Shell") };
+            prog: prog ?? (k?.foreground?.name || k?.title || "Shell"),
+            // ASH-14: an agent of the space's own (not its Assistant, a task's or a helper) is a thread under its row:
+            // its status word, its section among the threads, when its status last changed, and its rest
+            ...(isLooseAgent(k, s.assistant) ? { thread: true, word: wordOf(k), section: agentSection(wordOf(k)), at: Number(k.status_ms) || 0, ...restOf(agentRest(k)) } : {}) };
         });
       // the Assistant's own tab (first in the bar): the tab its terminal or chat is in
       const ak: any = s.assistant ? (this as any).terminalsOf?.(s.assistant) : null;
@@ -387,10 +394,14 @@ export class Compat {
         state: r.section, on: r.machine ?? host, created: "", ...(r.folder ? { taskFolder: r.folder } : {}),
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
-        ...(r.sub ? { sub: r.sub } : {}),
+        ...(r.sub ? { sub: r.sub } : {}), ...(r.awakeSub ? { awakeSub: r.awakeSub } : {}),
         // ASH-12: settled or snoozed by hand (its own shelf at the end of a list, never news), and whether it can be: a
         // live agent of its own to label
         ...restOf(r.restInfo), ...(r.worker ? { canRest: true } : {}),
+        // ASH-14: the space it is a thread of (core/threads.js threadHome), whether it can be settled from its row (with no
+        // live agent too), and its latest activity (the order among its space's threads)
+        ...((h) => (h ? { home: h } : {}))(threadHome(spaces, { machine: r.machine ?? null, folder: r.folder, space: r.space })),
+        ...(r.canSettle ? { canSettle: true } : {}), ...(r.activity ? { activity: r.activity } : {}),
         // its worker's own helper agents (SHEP-54), named in its detail's header; each one's row is over its chat's box
         ...(r.subagents?.length ? { subagents: r.subagents.map((x: any) => ({ chat: `t:${x.address}`, title: x.title, status: x.status, at: x.at, ...(x.ended ? { ended: x.ended } : {}) })) } : {}),
         // the window's Accept card accepting it now (shared "tasks.accepting", mods/accept-card): "Accepting…"
